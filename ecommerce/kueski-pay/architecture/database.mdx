@@ -1,0 +1,135 @@
+# Database
+
+## Descripción general
+
+El addon utiliza tres tablas propias en la base de datos de CS-Cart. 
+Todas se crean automáticamente durante la instalación del addon y se 
+eliminan en la desinstalación.
+
+---
+
+## Tablas
+
+### `cscart_kueski_payments`
+
+Persiste el mapping entre una orden de CS-Cart y un pago de Kueski. 
+Es la fuente de verdad para el estado del pago y la URL de redirección al widget.
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `id` | INT UNSIGNED AUTO_INCREMENT | PK |
+| `order_id` | INT UNSIGNED | ID de orden en CS-Cart — UNIQUE |
+| `payment_id` | VARCHAR(64) | ID de pago asignado por Kueski — UNIQUE |
+| `callback_url` | TEXT | URL de redirección al widget de Kueski |
+| `status` | VARCHAR(32) | `created` → `approved` / `denied` / `canceled` |
+| `created_at` | INT UNSIGNED | Timestamp UNIX |
+| `updated_at` | INT UNSIGNED | Timestamp UNIX |
+
+**Índices:**
+```sql
+UNIQUE KEY uk_order_id   (order_id)
+UNIQUE KEY uk_payment_id (payment_id)
+KEY        idx_status    (status)
+```
+
+---
+
+### `cscart_kueski_webhook_events`
+
+Auditoría completa de todos los eventos IPN recibidos de Kueski. 
+También sirve como mecanismo de idempotencia — un evento duplicado 
+se detecta antes de tocar cualquier orden.
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `event_id` | INT UNSIGNED AUTO_INCREMENT | PK |
+| `payment_id` | VARCHAR(64) | ID de pago de Kueski |
+| `order_id` | VARCHAR(64) | ID de orden |
+| `status` | VARCHAR(32) | Status recibido de Kueski |
+| `response_status` | VARCHAR(16) | Respuesta enviada (`accept`, `reject`, `ok`) |
+| `amount` | DECIMAL(12,2) NULL | Monto del pago |
+| `status_reason` | VARCHAR(255) NULL | Razón del status |
+| `received_at` | INT UNSIGNED | Timestamp UNIX |
+| `raw_payload` | MEDIUMTEXT NULL | Payload completo recibido |
+
+**Índices:**
+```sql
+UNIQUE KEY (payment_id, status)
+KEY idx_order_id (order_id)
+```
+
+> [!NOTE]
+> La `UNIQUE KEY (payment_id, status)` es el mecanismo de idempotencia 
+> a nivel DB — garantiza que el mismo evento no se procese dos veces 
+> aunque lleguen 20 requests concurrentes.
+
+---
+
+### `cscart_kueski_refunds`
+
+Auditoría de reembolsos procesados via Kueski Pay. Incluye el campo 
+`old_status` para permitir revertir la orden a su estado original si 
+la API falla.
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `id` | INT UNSIGNED AUTO_INCREMENT | PK |
+| `order_id` | INT UNSIGNED | ID de orden en CS-Cart |
+| `payment_id` | VARCHAR(64) | ID de pago en Kueski |
+| `refund_id` | VARCHAR(64) NULL | ID de reembolso devuelto por Kueski |
+| `amount` | DECIMAL(12,2) | Monto reembolsado |
+| `reason` | VARCHAR(32) | Razón del reembolso — default `merchant_refund` |
+| `status` | VARCHAR(32) | `completed` / `processing` / `failed` |
+| `error_code` | VARCHAR(64) NULL | Código de error de Kueski si aplica |
+| `error_message` | TEXT | Mensaje de error de Kueski si aplica |
+| `error_details` | TEXT | JSON serializado del objeto `errors` de Kueski |
+| `old_status` | VARCHAR(8) | Estado anterior de la orden (P o C) para reversión |
+| `created_at` | INT UNSIGNED | Timestamp UNIX |
+
+**Índices:**
+```sql
+UNIQUE KEY uk_kueski_refunds_order   (order_id)
+UNIQUE KEY uk_kueski_refunds_payment (payment_id)
+KEY        idx_kueski_refunds_status (status)
+```
+
+> [!NOTE]
+> `UNIQUE KEY (order_id)` y `UNIQUE KEY (payment_id)` garantizan idempotencia 
+> a dos niveles: el disparador operativo en CS-Cart es por `order_id` y el 
+> contrato externo de Kueski es por `payment_id`.
+
+> [!WARNING]
+> `cscart_kueski_refunds` está diseñada para v1 — reembolso total únicamente. 
+> Si en el futuro se implementan reembolsos parciales múltiples, los UNIQUE KEYs 
+> deberán revisarse.
+
+---
+
+## Relación entre tablas
+```
+cscart_orders
+      │
+      │ order_id
+      ▼
+cscart_kueski_payments          ← mapping order ↔ payment
+      │
+      │ payment_id / order_id
+      ▼
+cscart_kueski_webhook_events    ← auditoría IPN
+cscart_kueski_refunds           ← auditoría reembolsos
+```
+
+---
+
+## Install / Uninstall
+
+Las tres tablas se gestionan automáticamente desde `func.php`:
+
+| Operación | Acción |
+| :--- | :--- |
+| **Install** | Crea las tres tablas con `CREATE TABLE IF NOT EXISTS` |
+| **Uninstall** | Deshabilita métodos de pago asociados → elimina processor → dropea las tres tablas |
+
+> [!WARNING]
+> El uninstall elimina todos los datos de las tablas. 
+> Hacer backup antes de desinstalar en producción.

@@ -100,3 +100,51 @@ Para actualizar este repositorio con los cambios realizados en una instalación 
 
 ```bash
 bash scripts/sync_from_dev.sh
+
+## 7. Árbol de Archivos del Addon
+```
+app/addons/kueski_pay/
+├── addon.xml                          # Definición del addon, settings y versión
+├── init.php                           # Registro de hooks en bootstrap
+├── func.php                           # Install/uninstall + lógica de hooks
+├── payments/
+│   └── kueski_pay.php                 # Payment processor — crea pago + redirect
+├── controllers/
+│   └── frontend/
+│       └── kueski.php                 # Webhook listener (dispatch=kueski.webhook)
+└── Tygh/
+    └── Addons/
+        └── KueskiPay/
+            └── Services/
+                ├── KueskiApi.php          # Capa HTTP — comunicación con API Kueski
+                ├── JwtService.php         # Generación JWT HS256
+                └── KueskiRefundException.php  # Excepción especializada para refunds
+
+# Archivos fuera del addon (rutas globales CS-Cart)
+var/langs/
+├── en/addons/kueski_pay.po            # Traducciones inglés
+└── es/addons/kueski_pay.po            # Traducciones español
+
+design/themes/responsive/templates/addons/kueski_pay/
+└── views/orders/components/payments/
+    └── kueski_pay.tpl                 # Template frontend — confirmación de pago
+
+design/backend/templates/addons/kueski_pay/
+└── views/payments/components/cc_processors/
+    └── kueski_pay.tpl                 # Template backend — configuración processor
+```
+
+---
+
+## 8. Responsabilidad de Archivos Clave
+
+| Archivo | Responsabilidad |
+| :--- | :--- |
+| `addon.xml` | Define nombre, versión, settings (`public_key`, `api_secret`, `mode`, `kpay_min`, `kpay_max`) y compatibilidad con CS-Cart |
+| `init.php` | Registra hooks via `fn_register_hooks()` — sin este archivo CS-Cart no carga los hooks en bootstrap |
+| `func.php` | Install: crea tablas DB y registra processor. Uninstall: elimina tablas y deshabilita métodos de pago. Hooks: lógica de filtrado min/max en checkout |
+| `payments/kueski_pay.php` | Ejecutado por CS-Cart al procesar el pago — lee credenciales, construye payload, llama a `KueskiApi::createPayment()`, persiste mapping y redirige al widget |
+| `controllers/frontend/kueski.php` | Recibe IPN de Kueski — valida guards, verifica idempotencia, actualiza estado de orden via `fn_change_order_status()` y responde con JWT HS256 |
+| `KueskiApi.php` | Abstracción HTTP sobre la API de Kueski — maneja autenticación, timeouts, logs sanitizados y resolución de entornos (sandbox/testing/production) |
+| `JwtService.php` | Genera JWT HS256 con payload `public_key`, `iat`, `exp`, `jti` — usado en webhook response y refunds |
+| `KueskiRefundException.php` | Transporta metadata estructurada de errores de refund (`error_code`, `error_message`, `error_details`, `http_status`) desde la capa API hasta el hook |

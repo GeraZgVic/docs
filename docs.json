@@ -36,7 +36,17 @@
                   {
                     "group": "Architecture",
                     "pages": [
-                      "ecommerce/kueski-pay/architecture/file-structure"
+                      "ecommerce/kueski-pay/architecture/file-structure",
+                      "ecommerce/kueski-pay/architecture/database"
+                    ]
+                  },
+                  {
+                    "group": "Flows",
+                    "pages": [
+                      "ecommerce/kueski-pay/environments",
+                      "ecommerce/kueski-pay/payment-processor",
+                      "ecommerce/kueski-pay/create-payment",
+                      "ecommerce/kueski-pay/webhook"
                     ]
                   },
                   {

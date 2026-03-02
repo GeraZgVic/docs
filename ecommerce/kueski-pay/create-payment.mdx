@@ -1,0 +1,204 @@
+# Create Payment
+
+## Descripción general
+
+La creación de pago es el primer paso del flujo de Kueski Pay. El addon 
+llama a la API de Kueski para generar un pago y obtener la `callback_url` 
+a la que se redirige al cliente para completar la autorización.
+
+| Parámetro | Valor |
+| :--- | :--- |
+| **Método** | POST |
+| **Endpoint Sandbox** | `https://payments-api.sandbox-pay.kueski.codes/v1/payments` |
+| **Endpoint Testing** | `https://testing.kueskipay.com/v1/payments` |
+| **Endpoint Production** | `https://api.kueskipay.com/v1/payments` |
+| **Archivo** | `Tygh/Addons/KueskiPay/Services/KueskiApi.php` |
+
+---
+
+## Autenticación
+
+Create Payment usa **Bearer Token** con el `public_key` del merchant:
+```http
+Authorization: Bearer {API_PUBLIC_KEY}
+```
+
+> [!NOTE]
+> Esta autenticación es distinta a la del webhook response y refunds, 
+> que usan JWT HS256 firmado con `api_secret`.
+
+---
+
+## Headers
+
+| Header | Requerido | Descripción | Valor |
+| :--- | :--- | :--- | :--- |
+| `Authorization` | Sí | Bearer token con API Public Key | `Bearer {public_key}` |
+| `Content-Type` | Sí | Tipo de contenido | `application/json` |
+| `Kp-Name` | No | Nombre de la integración | `cscart` |
+| `Kp-Version` | No | Versión de la integración | `1.5.0` |
+| `Kp-Source` | No | Plataforma de origen | `ecommerce` |
+| `Kp-Trigger` | No | Método de creación | `checkout` |
+
+> [!NOTE]
+> Los headers `Kp-*` son opcionales pero recomendados para trazabilidad. 
+> Están hardcodeados en `KueskiApi::getOptionalKpHeaders()`.
+
+---
+
+## Payload
+
+### Campos requeridos
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `order_id` | string | ID de orden en CS-Cart (max 150 chars) |
+| `description` | string | Descripción del pago (max 128 chars) |
+| `amount.total` | decimal | Total a financiar — 2 decimales de precisión |
+| `amount.currency` | string | Código ISO-4217 — `MXN` |
+
+### Campos opcionales
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `amount.details` | object | Desglose: `subtotal`, `shipping`, `tax` |
+| `items` | array | Lista de productos (ver Item Object) |
+| `callbacks` | object | URLs de redirección por evento |
+| `shipping` | object | Información de envío |
+| `billing` | object | Información de facturación |
+
+---
+
+## Ejemplo de payload
+```json
+{
+    "order_id": "312",
+    "description": "Order #312",
+    "amount": {
+        "total": 7629.00,
+        "currency": "MXN"
+    },
+    "callbacks": {
+        "on_success": "https://yourstore.com/index.php?dispatch=payment_notification.return",
+        "on_reject": "https://yourstore.com/index.php?dispatch=payment_notification.cancel",
+        "on_canceled": "https://yourstore.com/index.php?dispatch=payment_notification.cancel",
+        "on_failed": "https://yourstore.com/index.php?dispatch=payment_notification.cancel"
+    },
+    "items": [
+        {
+            "name": "Producto ejemplo",
+            "description": "Descripción del producto",
+            "quantity": 1,
+            "price": 7629.00,
+            "currency": "MXN",
+            "sku": "SKU-001",
+            "tax": 0
+        }
+    ]
+}
+```
+
+---
+
+## Item Object
+
+| Campo | Tipo | Requerido | Descripción |
+| :--- | :--- | :--- | :--- |
+| `name` | string | Sí | Nombre del producto (max 255 chars) |
+| `description` | string | Sí | Descripción del producto (max 255 chars) |
+| `quantity` | integer | Sí | Cantidad — debe ser positivo |
+| `price` | decimal | Sí | Precio unitario — debe ser positivo |
+| `currency` | string | Sí | Código ISO-4217 — `MXN` |
+| `sku` | string | No | Identificador de producto (max 255 chars) |
+| `tax` | decimal | No | Impuesto aplicado al item |
+
+---
+
+## Callbacks Object
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `on_success` | string | URL para pagos aprobados |
+| `on_reject` | string | URL para pagos rechazados |
+| `on_canceled` | string | URL para pagos cancelados |
+| `on_failed` | string | URL para pagos fallidos |
+
+> [!IMPORTANT]
+> Las callbacks deben cumplir estas reglas:
+> - Deben usar **HTTPS** obligatoriamente
+> - No pueden ser `localhost` ni direcciones IP
+> - Pueden incluir query parameters
+
+---
+
+## Respuesta exitosa
+```json
+{
+    "status": "success",
+    "data": {
+        "payment_id": "315612511130103",
+        "order_id": "312",
+        "name": "Importaciones México",
+        "callback_url": "https://sandbox-ui.kueski.com/pay?payment_id=315612511130103"
+    }
+}
+```
+
+| Campo | Descripción |
+| :--- | :--- |
+| `data.payment_id` | ID de pago asignado por Kueski — se persiste en `cscart_kueski_payments` |
+| `data.callback_url` | URL a la que se redirige al cliente para autorizar el pago |
+
+---
+
+## Duplicate Order ID
+
+La API de Kueski no genera error por `order_id` duplicado. El comportamiento 
+depende del status del pago existente:
+
+| Status existente | Comportamiento |
+| :--- | :--- |
+| `approved` / `success` | Retorna el pago existente — no crea uno nuevo |
+| `created` / `processing` / `authorized` / `refunded` | Crea nuevo pago — el anterior queda como `failed` |
+| `failed` / `canceled` / `denied` | Crea nuevo pago — el anterior se ignora |
+
+> [!NOTE]
+> En CS-Cart esto no aplica en reintentos reales — cada intento genera un 
+> `order_id` único basado en timestamp. El único escenario donde aplica 
+> es doble-click, cubierto por session lock.
+
+---
+
+## Manejo de errores
+
+| HTTP Status | Código | Descripción |
+| :--- | :--- | :--- |
+| 400 | `amount-out-of-range` | Monto fuera de los límites del merchant ($60–$25,000 MXN) |
+| 400 | `unauthorized` | API key inválida o inactiva |
+| 400 | `invalid-payment-data` | Campo requerido faltante o inválido |
+| 400 | `invalid-email` | Formato de email incorrecto |
+| 400 | `invalid-zipcode` | Código postal inválido (debe ser 5-6 dígitos) |
+| 500 | `service-unavailable` | Error inesperado en el sistema de Kueski |
+
+---
+
+## Precisión decimal
+
+> [!IMPORTANT]
+> `amount.total` y `price` en items siempre se redondean con `round(..., 2)` 
+> antes de enviar. Kueski acepta números JSON — no es necesario forzar 
+> strings ni trailing zeros.
+
+---
+
+## Pruebas validadas
+
+| Escenario | Resultado |
+| :--- | :--- |
+| Creación exitosa en Sandbox | ✅ |
+| Headers `Kp-*` presentes en request | ✅ |
+| Precisión decimal correcta | ✅ |
+| Ambiente sandbox resuelto correctamente | ✅ |
+| Ambiente testing resuelto correctamente | ✅ |
+| Duplicate Order ID — status `created` reutiliza callback_url | ✅ |
+| Duplicate Order ID — status terminal crea nuevo pago | ✅ |

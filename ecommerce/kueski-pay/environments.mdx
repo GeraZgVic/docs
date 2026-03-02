@@ -1,0 +1,81 @@
+# Environments
+
+## Descripción general
+
+Kueski Pay provee tres ambientes independientes. El ambiente activo se configura 
+desde el panel de administración de CS-Cart en **Addons → Kueski Pay → Mode**.
+
+---
+
+## Ambientes disponibles
+
+| Ambiente | Base URL | Propósito |
+| :--- | :--- | :--- |
+| **Sandbox** | `https://payments-api.sandbox-pay.kueski.codes` | Desarrollo y pruebas |
+| **Testing** | `https://testing.kueskipay.com` | Pre-producción |
+| **Production** | `https://api.kueskipay.com` | Transacciones reales |
+
+---
+
+## Configuración en CS-Cart
+
+El selector de ambiente se guarda en `cscart_addon_settings` y se lee en runtime via:
+```php
+Registry::get('addons.kueski_pay.mode')
+```
+
+Los valores aceptados por el addon son:
+
+| Valor en settings | Ambiente resuelto |
+| :--- | :--- |
+| `sandbox`, `pruebas` | Sandbox |
+| `testing`, `test`, `staging`, `stage` | Testing |
+| `production`, `prod`, `produccion` | Production |
+| (cualquier otro) | Sandbox — fallback seguro |
+
+---
+
+## Resolución de URL en runtime
+
+La resolución ocurre en `KueskiApi::resolveBaseUrl()`. El addon normaliza 
+el valor del setting a lowercase antes de resolver, por lo que el matching 
+es insensible a mayúsculas.
+```php
+// Ejemplo de resolución
+$mode = 'testing';
+// base_url → https://testing.kueskipay.com
+// endpoint → https://testing.kueskipay.com/v1/payments
+```
+
+> [!NOTE]
+> El log `ENV DEBUG` registra el ambiente y endpoint resuelto en cada request. 
+> Este log está condicionado a entornos `dev.*` y debe deshabilitarse antes de 
+> Go-Live en producción.
+
+---
+
+## Credenciales por ambiente
+
+| Ambiente | `public_key` | `api_secret` | Estado |
+| :--- | :--- | :--- | :--- |
+| **Sandbox** | API Key ejemplo Kueski | Disponible | ✅ Validado |
+| **Testing** | Pendiente | Pendiente | ⚠️ Sin credenciales propias |
+| **Production** | Pendiente | Pendiente | ⏳ Post-certificación |
+
+> [!IMPORTANT]
+> Las credenciales de Sandbox y Production son independientes. 
+> Nunca usar credenciales de Production en Sandbox ni viceversa.
+
+---
+
+## Validación end-to-end por ambiente
+
+| Ambiente | URL resuelta | Validación |
+| :--- | :--- | :--- |
+| `sandbox` | `https://payments-api.sandbox-pay.kueski.codes` | ✅ Flujos E2E completos |
+| `testing` | `https://testing.kueskipay.com` | ✅ HTTP 400 `unauthorized` — endpoint correcto, credenciales pendientes |
+| `production` | `https://api.kueskipay.com` | ⏳ Pendiente credenciales |
+
+> [!NOTE]
+> El HTTP 400 `unauthorized` en testing confirma que el endpoint es correcto 
+> y la infraestructura responde — el error es de credencial, no de implementación.

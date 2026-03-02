@@ -1,0 +1,164 @@
+# Payment Processor
+
+## Descripción general
+
+El Payment Processor es el componente que CS-Cart ejecuta cuando el cliente 
+selecciona Kueski Pay en el checkout y confirma su pedido. Se encarga de 
+crear el pago en la API de Kueski, persistir el mapping y redirigir al cliente 
+al widget de autorización.
+
+| Parámetro | Valor |
+| :--- | :--- |
+| **Archivo** | `payments/kueski_pay.php` |
+| **Ejecutado por** | CS-Cart al procesar el pago en checkout |
+| **Processor script** | `kueski_pay.php` |
+
+---
+
+## Flujo general
+```
+Cliente confirma pedido en checkout
+        ↓
+CS-Cart ejecuta kueski_pay.php
+        ↓
+Lee credenciales + detecta ambiente
+        ↓
+Construye payload + llama KueskiApi::createPayment()
+        ↓
+Persiste mapping en cscart_kueski_payments
+        ↓
+Redirige cliente al widget de Kueski
+        ↓
+Cliente autoriza / cancela / es rechazado
+        ↓
+Kueski notifica resultado via Webhook
+```
+
+---
+
+## Payload de creación de pago
+```json
+{
+    "order_id": "312",
+    "description": "Order #312",
+    "amount": {
+        "total": 7629.00,
+        "currency": "MXN"
+    },
+    "callbacks": {
+        "on_success": "https://yourstore.com/index.php?dispatch=payment_notification.return",
+        "on_reject": "https://yourstore.com/index.php?dispatch=payment_notification.cancel",
+        "on_canceled": "https://yourstore.com/index.php?dispatch=payment_notification.cancel",
+        "on_failed": "https://yourstore.com/index.php?dispatch=payment_notification.cancel"
+    },
+    "items": [
+        {
+            "name": "Producto ejemplo",
+            "description": "Descripción del producto",
+            "quantity": 1,
+            "price": 7629.00,
+            "currency": "MXN",
+            "sku": "SKU-001",
+            "tax": 0
+        }
+    ]
+}
+```
+
+> [!NOTE]
+> `items` solo se incluye en el payload si el array no está vacío.
+> `amount.total` siempre se redondea con `round(..., 2)`.
+
+---
+
+## Regla de reintento por status
+
+Cuando el cliente intenta pagar una orden que ya tiene un mapping en 
+`cscart_kueski_payments`, el processor aplica esta lógica antes de 
+crear un nuevo pago:
+
+| Status en BD | Acción |
+| :--- | :--- |
+| `created` | Reusar `callback_url` — redirect directo sin nuevo pago |
+| `approved` | Redirect a detalle de orden + notice (pago ya completado) |
+| `denied` / `canceled` / `cancelled` | Crear nuevo pago — UPSERT sobrescribe mapping |
+| (vacío / desconocido) | Permitir flujo normal |
+
+---
+
+## Idempotencia
+
+La idempotencia se garantiza en dos niveles:
+
+**Session lock** — overwrite directo del timestamp, sin patrón `unset + set`.
+
+**DB-level** — `INSERT ... ON DUPLICATE KEY UPDATE` en `cscart_kueski_payments` 
+con `UNIQUE KEY (order_id)`.
+
+---
+
+## PAYMENT_NOTIFICATION (UX return/cancel)
+
+Cuando Kueski redirige de vuelta al sitio del merchant, CS-Cart ejecuta 
+el modo `PAYMENT_NOTIFICATION`. Este bloque es solo de UX — no finaliza 
+la orden (eso lo hace el webhook).
+
+| Modo | Comportamiento |
+| :--- | :--- |
+| `return` | Muestra mensaje "confirmando pago" → redirect a `checkout.complete?order_id=X` + limpia carrito |
+| `cancel` | Muestra mensaje de cancelación → redirect a checkout con carrito intacto para reintento |
+
+> [!IMPORTANT]
+> CS-Cart define `PAYMENT_NOTIFICATION = true` (booleano) en 
+> `payment_notification.php`. La distinción entre `return` y `cancel` 
+> viene del valor de `$mode`, no de la constante.
+
+---
+
+## Mapping en base de datos
+
+El processor persiste el resultado de cada `createPayment()` en 
+`cscart_kueski_payments`:
+
+| Campo | Descripción |
+| :--- | :--- |
+| `order_id` | ID de orden en CS-Cart |
+| `payment_id` | ID de pago asignado por Kueski |
+| `callback_url` | URL de redirección al widget de Kueski |
+| `status` | `created` → actualizado por webhook |
+| `created_at` | Timestamp UNIX |
+| `updated_at` | Timestamp UNIX |
+
+---
+
+## Nota técnica — processor_id
+
+> [!WARNING]
+> El método de pago Kueski Pay debe tener `processor_id` vinculado correctamente 
+> en `cscart_payments`. Si `processor_id = 0`, CS-Cart trata el método como 
+> offline y **nunca ejecuta** `kueski_pay.php`.
+>
+> Para verificar y corregir en producción:
+> ```sql
+> UPDATE cscart_payments
+> SET processor_id = (
+>     SELECT processor_id FROM cscart_payment_processors
+>     WHERE processor_script = 'kueski_pay.php'
+> )
+> WHERE payment_id = {your_payment_id};
+> ```
+
+---
+
+## Pruebas validadas
+
+| Escenario | Resultado |
+| :--- | :--- |
+| Flujo completo Sandbox — Approved | ✅ |
+| Flujo completo Sandbox — Canceled | ✅ |
+| Flujo completo Sandbox — Declined | ✅ |
+| Reintento con status `created` — reusar callback_url | ✅ |
+| Reintento con status `approved` — redirect a detalle | ✅ |
+| Reintento con status `denied` — nuevo pago | ✅ |
+| UX return — checkout.complete + carrito limpio | ✅ |
+| UX cancel — carrito intacto para reintento | ✅ |

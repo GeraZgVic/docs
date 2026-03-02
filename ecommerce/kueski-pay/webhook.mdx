@@ -1,0 +1,153 @@
+# Webhook
+
+## Descripción general
+
+Kueski Pay notifica el resultado de cada pago enviando un **Instant Payment Notification (IPN)** 
+al endpoint del addon vía HTTP POST. El addon procesa la notificación, actualiza el estado 
+de la orden en CS-Cart y responde con un JWT HS256 firmado.
+
+---
+
+## Endpoint
+
+| Parámetro | Valor |
+| :--- | :--- |
+| **URL DEV** | `https://dev.importacionesamexico.com.mx/index.php?dispatch=kueski.webhook` |
+| **Método** | POST |
+| **Content-Type** | application/json |
+| **Archivo** | `controllers/frontend/kueski.php` |
+
+> [!IMPORTANT]
+> El endpoint debe ser públicamente accesible vía HTTPS. Basic Auth debe estar 
+> deshabilitado para permitir callbacks desde Kueski.
+
+---
+
+## Payload entrante
+```json
+{
+    "payment_id": "315612511130103",
+    "order_id": "Order-1623881150",
+    "amount": 3550.00,
+    "status": "approved",
+    "status_reason": "The payment was approved by Kueski Pay",
+    "sandbox": true
+}
+```
+
+| Campo | Tipo | Requerido | Descripción |
+| :--- | :--- | :--- | :--- |
+| `payment_id` | string | Sí | ID de pago asignado por Kueski |
+| `order_id` | string | Sí | ID de orden del merchant |
+| `amount` | decimal | Sí | Monto del pago |
+| `status` | string | Sí | `approved`, `denied` o `canceled` |
+| `status_reason` | string | No | Descripción del estado |
+| `sandbox` | boolean | No | `true` si es transacción de prueba |
+
+---
+
+## Guards de seguridad
+
+Antes de modificar cualquier orden, el webhook ejecuta tres validaciones en secuencia:
+
+| Guard | Validación | Fallo |
+| :--- | :--- | :--- |
+| **1. order_id numérico** | `order_id` debe ser entero mayor a 0 | Responde sin tocar ninguna orden |
+| **2. Orden existe** | La orden debe existir en `cscart_orders` | Responde sin tocar ninguna orden |
+| **3. Mapping válido** | Debe existir coincidencia `order_id ↔ payment_id` en `cscart_kueski_payments` | Responde sin tocar ninguna orden |
+
+> En todos los casos de fallo de guard: se guarda evidencia en `cscart_kueski_webhook_events`, 
+> no se modifica ninguna orden y se responde HTTP 200 con JWT válido.
+
+---
+
+## Matriz de respuesta
+
+| Status entrante | Guard | Respuesta | Acción CS-Cart |
+| :--- | :--- | :--- | :--- |
+| `approved` | ✅ válido | `accept` | `fn_change_order_status($order_id, 'P')` — Paid |
+| `approved` | ❌ inválido | `reject` | Ninguna — solo auditoría |
+| `denied` | ✅ válido | `ok` | `fn_change_order_status($order_id, 'D')` — Declined |
+| `denied` | ❌ inválido | `ok` | Ninguna — solo auditoría |
+| `canceled` | ✅ válido | `ok` | `fn_change_order_status($order_id, 'I')` — Canceled |
+| `canceled` | ❌ inválido | `ok` | Ninguna — solo auditoría |
+| `cancelled` | ✅/❌ | `ok` | Igual que `canceled` |
+| (desconocido) | — | `ok` | Solo registrado con warning en logs |
+
+> [!NOTE]
+> `canceled` y `cancelled` son ambas grafías válidas — Kueski ha enviado ambas 
+> en distintos momentos. El addon maneja las dos de forma idéntica.
+
+---
+
+## Idempotencia
+
+La idempotencia se garantiza a nivel de base de datos mediante `INSERT IGNORE` 
+y una `UNIQUE KEY (payment_id, status)` en `cscart_kueski_webhook_events`.
+
+**Comportamiento ante evento duplicado:**
+1. Se detecta el registro existente via `SELECT`
+2. Se responde con el mismo `response_status` original
+3. No se vuelve a modificar ninguna orden
+4. Validado con 20 requests concurrentes — 1 procesamiento real + 19 idempotentes ✅
+
+---
+
+## Respuesta JWT (outbound)
+
+El webhook responde siempre con HTTP 200 + header `Authorization: Bearer {JWT}`.
+```http
+HTTP/2 200
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+
+{"status": "accept"}
+```
+
+**Configuración JWT:**
+
+| Parámetro | Valor |
+| :--- | :--- |
+| Algoritmo | HS256 |
+| Firmado con | `api_secret` |
+| `public_key` | API Public Key del merchant |
+| `iat` | Timestamp actual en segundos |
+| `exp` | `iat + 300s` (5 minutos) |
+| `jti` | `SHA256(api_secret:iat)` |
+
+> [!WARNING]
+> Si faltan credenciales (`public_key` o `api_secret`), el webhook responde 
+> HTTP 500 y termina con `exit` — no continúa ejecución.
+
+---
+
+## Auditoría
+
+Todos los eventos se persisten en `cscart_kueski_webhook_events` independientemente 
+del resultado — incluyendo guards fallidos, eventos idempotentes y errores.
+
+| Campo | Descripción |
+| :--- | :--- |
+| `payment_id` | ID de pago de Kueski |
+| `order_id` | ID de orden |
+| `status` | Status recibido de Kueski |
+| `response_status` | Respuesta enviada (`accept`, `reject`, `ok`) |
+| `amount` | Monto del pago |
+| `status_reason` | Razón del status |
+| `raw_payload` | Payload completo recibido |
+| `received_at` | Timestamp UNIX |
+
+---
+
+## Pruebas validadas
+
+| Escenario | Resultado |
+| :--- | :--- |
+| Approved — orden marcada como Paid | ✅ |
+| Denied — orden marcada como Declined | ✅ |
+| Canceled — orden marcada como Canceled | ✅ |
+| Guard: `order_id` no numérico | ✅ |
+| Guard: `approved` con mapping inválido → `reject` | ✅ |
+| Idempotencia — 3 replays del mismo evento | ✅ |
+| Race condition — 20 concurrentes | ✅ |
+| Late webhook defense — mismatch `payment_id` | ✅ |
