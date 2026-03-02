@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "IMX Integrations",
+  "name": "IMX Platform Documentation",
   "colors": {
     "primary": "#16A34A",
     "light": "#07C983",
@@ -15,38 +15,36 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Integrations",
+        "tab": "Platform",
         "groups": [
           {
             "group": "Overview",
             "pages": [
               "index"
             ]
-          },
+          }
+        ]
+      },
+      {
+        "tab": "E-Commerce (CS-Cart)",
+        "groups": [
           {
-            "group": "Kueski Pay",
+            "group": "Payments",
             "pages": [
-              "kueski-pay/overview",
-              {
-                "group": "Architecture",
-                "pages": [
-                  "kueski-pay/architecture/file-structure"
-                ]
-              },
-              {
-                "group": "Refunds",
-                "pages": [
-                  "kueski-pay/refunds/overview"
-                ]
-              }
+              "kueski-pay/overview"
             ]
           },
           {
-            "group": "Aplazo",
+            "group": "Future Integrations",
             "pages": []
-          },
+          }
+        ]
+      },
+      {
+        "tab": "Internal Systems",
+        "groups": [
           {
-            "group": "Mercado Pago",
+            "group": "IMXTime",
             "pages": []
           }
         ]
@@ -58,10 +56,7 @@
     "links": []
   },
   "contextual": {
-    "options": [
-      "copy",
-      "view"
-    ]
+    "options": ["copy", "view"]
   },
   "footer": {}
 }
