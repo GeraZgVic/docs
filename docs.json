@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Kueski Pay Addon",
+  "name": "IMX Integrations",
   "colors": {
     "primary": "#16A34A",
     "light": "#07C983",
@@ -15,25 +15,39 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Kueski Pay Addon",
+        "tab": "Integrations",
         "groups": [
           {
             "group": "Overview",
             "pages": [
-              "kueski-pay/overview"
+              "index"
             ]
           },
           {
-            "group": "Architecture",
+            "group": "Kueski Pay",
             "pages": [
-              "kueski-pay/architecture/file-structure"
+              "kueski-pay/overview",
+              {
+                "group": "Architecture",
+                "pages": [
+                  "kueski-pay/architecture/file-structure"
+                ]
+              },
+              {
+                "group": "Refunds",
+                "pages": [
+                  "kueski-pay/refunds/overview"
+                ]
+              }
             ]
           },
           {
-            "group": "Refunds",
-            "pages": [
-              "kueski-pay/refunds/overview"
-            ]
+            "group": "Aplazo",
+            "pages": []
+          },
+          {
+            "group": "Mercado Libre",
+            "pages": []
           }
         ]
       }
