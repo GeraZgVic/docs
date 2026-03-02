@@ -50,6 +50,12 @@
                     ]
                   },
                   {
+                    "group": "Checkpoints",
+                    "pages": [
+                      "ecommerce/kueski-pay/kueski-pay-checkpoint-v1.12.md"
+                    ]
+                  },
+                  {
                     "group": "Refunds",
                     "pages": [
                       "ecommerce/kueski-pay/refunds/overview"
