@@ -1,0 +1,102 @@
+# Notas sobre la Estructura de Archivos en CS-Cart
+
+## Descripción General
+Este repositorio contiene el código fuente del addon **kueski_pay** para CS-Cart. 
+Sin embargo, debido a la arquitectura interna de CS-Cart, no todos los archivos relacionados con el addon se almacenan físicamente dentro de la carpeta:
+
+`app/addons/kueski_pay/`
+
+En una instalación real de CS-Cart, ciertos recursos se cargan desde **rutas globales** del sistema. Este repositorio incluye dichos archivos con fines de control de versiones y despliegue, aunque en *runtime* se encuentren fuera del directorio del addon.
+
+---
+
+## 1. Archivos de Idioma (.po)
+En una instalación activa de CS-Cart, los archivos de idioma **NO** se almacenan dentro del directorio del addon. CS-Cart carga las traducciones desde:
+
+`var/langs/{codigo_idioma}/kueski_pay.po`
+
+**Ejemplos:**
+* `var/langs/en/kueski_pay.po`
+* `var/langs/es/kueski_pay.po`
+
+> [!IMPORTANT]  
+> Estos archivos deben existir dentro de `var/langs/` para que CS-Cart pueda detectar y cargar correctamente las traducciones del addon.
+> 
+> **⚠️ No mover los archivos .po dentro de `app/addons/kueski_pay/`.** CS-Cart no los leerá desde esa ubicación.
+
+---
+
+## 2. Templates (Plantillas de Diseño)
+CS-Cart carga las plantillas del frontend y backend desde rutas globales dentro de `design/`, no desde la carpeta del addon.
+
+### Plantillas del Frontend
+**Ruta:** `design/themes/responsive/templates/addons/kueski_pay/`
+
+* **Ejemplo:** `design/themes/responsive/templates/addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl`
+
+### Plantillas del Backend
+**Ruta:** `design/backend/templates/addons/kueski_pay/`
+
+* **Ejemplo:** `design/backend/templates/addons/kueski_pay/views/payments/components/cc_processors/kueski_pay.tpl`
+
+> [!WARNING]  
+> Estas plantillas deben permanecer en sus respectivas rutas dentro de `design/` para que CS-Cart pueda renderizarlas correctamente. **No mover estas plantillas dentro de `app/addons/kueski_pay/`.**
+
+---
+
+## 3. ¿Por Qué Se Incluyen en Este Repositorio?
+Aunque estos archivos viven fuera del addon en tiempo de ejecución, se incluyen aquí para:
+
+* **Mantener cobertura completa** de control de versiones.
+* **Permitir despliegues reproducibles** y evitar problemas por archivos faltantes.
+* **Garantizar que los releases sean completos** y facilitar procesos de **CI/CD**.
+* **Documentar claramente** la estructura real requerida por CS-Cart.
+
+Este repositorio representa la estructura completa necesaria para una instalación correcta del addon.
+
+---
+
+## 4. Responsabilidad en el Despliegue
+Durante el proceso de despliegue (manual o automatizado), se debe asegurar la copia de archivos según este esquema:
+
+| Origen en Repo | Destino en Servidor |
+| :--- | :--- |
+| Archivos de idioma | `var/langs/{codigo_idioma}/` |
+| Plantillas de diseño | Rutas correspondientes en `design/` |
+| Lógica del addon | `app/addons/kueski_pay/` |
+
+**Si estos pasos no se ejecutan correctamente, pueden presentarse problemas como:**
+* Traducciones faltantes.
+* El procesador de pago no es visible en el admin.
+* Plantillas de pago no renderizadas en el frontend.
+
+---
+
+## 5. Arquitectura y Separación de Recursos
+
+Es fundamental entender que la carpeta `app/addons/kueski_pay/` contiene **únicamente la lógica ejecutable** (controladores, funciones, esquemas PHP y hooks). 
+
+CS-Cart utiliza una arquitectura de rutas globales para desacoplar la lógica del diseño y los idiomas. Esta separación es intencional y está alineada con la arquitectura oficial de la plataforma para permitir la herencia de temas y la gestión centralizada de traducciones.
+
+---
+
+## 6. Flujo de Desarrollo y Releases
+
+Este repositorio está diseñado para gestionar el ciclo de vida completo del addon, permitiendo la sincronización desde un entorno local y la generación de un **paquete ZIP instalable** compatible con el gestor de extensiones estándar de CS-Cart.
+
+### Estructura del Paquete Generado
+El proceso de exportación organiza automáticamente los archivos en el árbol de directorios raíz requerido por el instalador:
+* **Lógica del Addon:** `app/addons/kueski_pay/`
+* **Templates Frontend:** `design/themes/responsive/templates/addons/kueski_pay/`
+* **Templates Backend:** `design/backend/templates/addons/kueski_pay/`
+* **Idiomas:** `var/langs/{en,es}/addons/kueski_pay.po`
+
+---
+
+### Operaciones de Automatización
+
+#### A. Sincronizar desde Entorno de Desarrollo (DEV)
+Para actualizar este repositorio con los cambios realizados en una instalación activa de CS-Cart, ejecuta:
+
+```bash
+bash scripts/sync_from_dev.sh
