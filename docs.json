@@ -19,9 +19,7 @@
         "groups": [
           {
             "group": "Overview",
-            "pages": [
-              "index"
-            ]
+            "pages": ["index"]
           }
         ]
       },
@@ -31,7 +29,24 @@
           {
             "group": "Payments",
             "pages": [
-              "ecommerce/kueski-pay/overview"
+              "ecommerce/kueski-pay/overview",
+              {
+                "group": "Kueski Pay",
+                "pages": [
+                  {
+                    "group": "Architecture",
+                    "pages": [
+                      "ecommerce/kueski-pay/architecture/file-structure"
+                    ]
+                  },
+                  {
+                    "group": "Refunds",
+                    "pages": [
+                      "ecommerce/kueski-pay/refunds/overview"
+                    ]
+                  }
+                ]
+              }
             ]
           }
         ]
