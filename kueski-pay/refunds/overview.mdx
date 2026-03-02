@@ -1,0 +1,139 @@
+# Kueski Pay — CS-Cart
+## Análisis y Diseño: Módulo de Reembolsos
+
+**Versión:** 2.0 — **Fecha:** 2026-03-02  
+**Responsables:** Víctor / Carlos  
+**Estado:** Diseño Final — Cerrado
+
+---
+
+## 1. Contexto
+Los reembolsos no son requeridos para la certificación con Brenda (Success, Denied, Cancelled), pero son bloqueantes para Go-Live en producción. Este módulo permite procesar devoluciones totales integradas directamente con la API de Kueski Pay desde el panel de administración de CS-Cart.
+
+## 2. Endpoint Kueski Pay
+
+### 2.1 Request
+| Parámetro | Valor |
+| :--- | :--- |
+| **Método** | POST |
+| **URL (Producción)** | `https://api.kueskipay.com/api/refunds` |
+| **URL (Sandbox)** | `https://payments-api.sandbox-pay.kueski.codes/api/refunds` |
+| **Authorization** | Bearer {JWT} — firmado con api_secret (HS256) |
+| **Content-Type** | application/json |
+
+### 2.2 Body
+| Campo | Tipo | Requerido | Descripción |
+| :--- | :--- | :--- | :--- |
+| `payment_id` | string | Sí | ID de pago de Kueski Pay. |
+| `amount` | decimal | No | Monto a reembolsar. Si se omite, se reembolsa el total. |
+| `reason` | string | No | `merchant_refund` (por defecto en este addon). |
+
+### 2.3 Respuesta exitosa (HTTP 201)
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `status` | string | success o fail |
+| `data.refund_id` | string | ID único del reembolso en Kueski. |
+| `data.status` | string | completed o processing. |
+| `data.amount` | decimal | Monto reembolsado. |
+
+---
+
+## 3. Constraints del API
+- El reembolso debe procesarse dentro de los 100 días posteriores al pago.
+- El reembolso debe estar dentro del año fiscal en curso.
+- Solo puede haber un reembolso en procesamiento a la vez por `payment_id`.
+- No se puede reembolsar si el cliente ya liquidó el préstamo completo.
+
+---
+
+## 4. Decisiones de diseño
+
+### 4.1 Alcance — Primera versión
+Se implementará únicamente el **reembolso total**. Se ha cerrado la decisión de doble estado: **'R'** (Refund solicitado, manual) y **'X'** (Reembolsado, automático). Se descarta el setting `refund_allowed_from` por no aplicar en v1.
+
+### 4.2 Punto de disparo en CS-Cart
+El reembolso se disparará cuando el administrador cambie manualmente el estado de una orden a **'R' (Reembolso solicitado)**. El hook `fn_change_order_status_post` actuará como guard con estas condiciones:
+- `new_status == 'R'`
+- `old_status IN ('P', 'C')`
+- `cscart_kueski_payments.status == 'approved'`
+- No existe un reembolso previo exitoso/en proceso para ese `payment_id`.
+
+*Nota: Se incluye 'C' (Complete) por ser el estado operativo post-entrega gestionado 100% por el admin.*
+
+### 4.3 Auditoría
+Se usará la tabla `cscart_kueski_refunds`. Se incluye el campo `old_status` para permitir revertir la orden al estado original (P o C) si la API falla.
+
+### 4.4 Idempotencia
+Defensa interna contra acciones duplicadas (doble-click/refresh). Kueski responde de forma síncrona (HTTP 201), por lo que no se esperan notificaciones asíncronas de refunds.
+
+---
+
+## 5. Arquitectura de implementación
+
+### 5.1 Archivos a crear/modificar
+| Archivo | Acción | Descripción |
+| :--- | :--- | :--- |
+| `KueskiApi.php` | Modificar | Agregar método `refund()`. |
+| `func.php` | Modificar | Hook `fn_change_order_status_post` + lógica de refund. |
+| `init.php` | Modificar | Registrar hook `change_order_status_post`. |
+| `func.php` (install) | Modificar | Crear tabla y estados **R** y **X** en `cscart_statuses`. |
+| `func.php` (uninstall) | Modificar | Eliminar tabla y estados **R** y **X**. |
+
+### 5.2 Tabla `cscart_kueski_refunds`
+| Campo | Tipo | Notas |
+| :--- | :--- | :--- |
+| `id` | INT UNSIGNED AUTO_INCREMENT | PK |
+| `order_id` | INT UNSIGNED | FK referencia a `cscart_orders`. |
+| `payment_id` | VARCHAR(64) | ID de pago en Kueski. |
+| `refund_id` | VARCHAR(64) NULL | ID de reembolso devuelto por Kueski. |
+| `amount` | DECIMAL(12,2) | Monto reembolsado. |
+| `reason` | VARCHAR(32) | Razón del reembolso. |
+| `status` | VARCHAR(32) | `completed` \| `processing` \| `failed` |
+| `error_code` | VARCHAR(64) NULL | Código de error de Kueski si aplica. |
+| `error_message` | TEXT NULL | Mensaje de error de Kueski si aplica. |
+| `created_at` | INT UNSIGNED | Timestamp UNIX. |
+| `old_status` | VARCHAR(8) | Estado anterior (P o C) para reversión. |
+
+---
+
+## 6. Flujo de ejecución
+1. Admin cambia orden de **P** o **C** a **R** en panel CS-Cart.
+2. CS-Cart dispara hook `fn_change_order_status_post`.
+3. Hook valida guard: `new_status == 'R'` y `old_status IN ('P','C')`.
+4. Hook verifica mapping aprobado en `cscart_kueski_payments`.
+5. Hook verifica idempotencia en `cscart_kueski_refunds`.
+6. Hook llama a `KueskiApi::refund($payment_id)`.
+7. **Si HTTP 201:** Guarda datos en auditoría. Cambia estado de orden **R → X** automáticamente. Muestra éxito.
+8. **Si HTTP 400:** Guarda error en auditoría. **Revierte orden a old_status (P o C)**. Muestra error explicativo.
+
+---
+
+## 7. Mapa de estados de órdenes (CS-Cart 4.19.x)
+| Código | Nombre | Usado por Kueski |
+| :--- | :--- | :--- |
+| **P** | Paid | Sí — webhook approved |
+| **C** | Complete | No — solo admin |
+| **O** | Open | No |
+| **F** | Failed | Sí — webhook denied |
+| **I** | Canceled | Sí — webhook canceled |
+| **R** | Reembolso solicitado | **Nuevo** — disparador addon |
+| **X** | Reembolsado | **Nuevo** — éxito automático |
+
+*Nota: **N (Incompleta)** es un estado interno hardcoded. No usar como disparador.*
+
+---
+
+## 8. Pendientes antes de implementar
+- Todas las preguntas de diseño están cerradas. El único prerrequisito antes de implementar es esperar el visto bueno de Brenda en la certificación.
+
+---
+
+## 9. Estimación
+| Tarea | Estimación |
+| :--- | :--- |
+| `KueskiApi::refund()` + autenticación JWT | 2-3 horas |
+| Hook `fn_change_order_status_post` + lógica refund | 3-4 horas |
+| Tabla BD: `cscart_kueski_refunds` | 1 hora |
+| Creación de estados **R** y **X** en install/uninstall | 1 hora |
+| Pruebas en Sandbox + evidencia | 3-4 horas |
+| **Total estimado** | **1 - 2 días** |
