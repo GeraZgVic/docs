@@ -31,12 +31,8 @@
           {
             "group": "Payments",
             "pages": [
-              "kueski-pay/overview"
+              "ecommerce/kueski-pay/overview"
             ]
-          },
-          {
-            "group": "Future Integrations",
-            "pages": []
           }
         ]
       },
