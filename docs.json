@@ -24,13 +24,19 @@
           {
             "group": "Kueski Pay Addon",
             "pages": [
-              "kueski-pay/overview"
-            ]
-          },
-          {
-            "group": "Refund Module",
-            "pages": [
-              "kueski-pay/refunds/overview"
+              "kueski-pay/overview",
+              {
+                "group": "Architecture",
+                "pages": [
+                  "kueski-pay/architecture/file-structure"
+                ]
+              },
+              {
+                "group": "Refunds",
+                "pages": [
+                  "kueski-pay/refunds/overview"
+                ]
+              }
             ]
           },
           {
