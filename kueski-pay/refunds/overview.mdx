@@ -3,7 +3,7 @@
 
 **Versión:** 2.1 — **Fecha:** 2026-03-02  
 **Responsables:** Víctor / Carlos  
-**Estado:** Diseño Final — En implementación
+**Estado:** Diseño Final — Bloqueado por certificación
 
 ---
 
@@ -64,6 +64,7 @@ actuará como guard con estas condiciones:
 - `old_status IN ('P', 'C')`
 - `cscart_kueski_payments.status == 'approved'`
 - No existe un reembolso previo exitoso/en proceso para ese `payment_id`.
+- La verificación lógica no sustituye la protección DB-level; el UNIQUE es la garantía final ante concurrencia.
 
 *Nota: Se incluye 'C' (Complete) por ser el estado operativo post-entrega 
 gestionado 100% por el admin.*
@@ -79,6 +80,7 @@ niveles:
   necesarios porque la restricción oficial de Kueski es por `payment_id` y el 
   disparador operativo en CS-Cart es por `order_id`.
 - **Lógica:** verificación en hook antes de INSERT.
+**Nota: En caso de violación de UNIQUE (error SQL 1062), el addon debe capturar la excepción y tratarlo como operación ya procesada, evitando estado inconsistente.**
 
 Kueski responde de forma síncrona (HTTP 201), por lo que no se esperan 
 notificaciones asíncronas de refunds.
@@ -94,6 +96,7 @@ El addon debe:
 - Guardar `error_details` (objeto `errors` serializado a JSON si existe).
 - Revertir automáticamente la orden a `old_status` (P o C).
 - No reintentar automáticamente el refund (operación financiera sensible).
+- HTTP 401 se considera error de configuración (credenciales inválidas o JWT incorrecto).
 
 ### 4.6 JWT para refunds
 Mismo mecanismo que el webhook response — `JwtService.php` sin cambios:
@@ -150,7 +153,7 @@ CREATE TABLE IF NOT EXISTS `cscart_kueski_refunds` (
 **Decisiones sobre constraints:**
 - `UNIQUE KEY (order_id)` — protege contra doble-click desde CS-Cart
 - `UNIQUE KEY (payment_id)` — refleja el contrato externo de Kueski
-- `TEXT` sin `NULL` explícito — compatible MySQL 8.0.42/8.0.44
+- `TEXT` sin `NULL` explícito — compatible MySQL 8.0.42/8.0.44 (MySQL 8 normaliza TEXT NULL DEFAULT NULL a TEXT, por lo que se deja en forma mínima.)
 - `VARCHAR(32)` para `status` — flexible ante respuestas inesperadas de Kueski
 - Índices adicionales (`refund_id`, `created_at`) descartados para v1
 
@@ -170,21 +173,53 @@ CREATE TABLE IF NOT EXISTS `cscart_kueski_refunds` (
    **Revierte orden a old_status (P o C)**. Muestra error explicativo.
 
 ---
+### 6.1 Diagrama de flujo
+```mermaid
+flowchart TD
+    A([Admin cambia orden a R]) --> B{Guard:\nnew_status == R\nold_status IN P,C}
+    B -- ❌ No aplica --> Z([Salir sin acción])
+    B -- ✅ Pasa --> C{Mapping en\ncscart_kueski_payments\nstatus == approved?}
+    C -- ❌ No existe --> Z
+    C -- ✅ Existe --> D{Idempotencia:\n¿Ya existe refund\ncompleted/processing\npara este payment_id?}
+    D -- ✅ Ya existe --> Z
+    D -- ❌ No existe --> E[Llamar KueskiApi::refund\npayment_id + api_secret]
+    E --> F{HTTP 201?}
+    F -- ✅ Sí --> G[Guardar auditoría\nstatus = completed]
+    G --> H[Cambiar orden\nR → X automático]
+    H --> I([✅ Éxito — mostrar confirmación])
+    F -- ❌ No --> J[Guardar auditoría\nerror_code + error_message\n+ error_details + status = failed]
+    J --> K[Revertir orden\na old_status P o C]
+    K --> L([❌ Error — mostrar mensaje explicativo])
 
+    style A fill:#4a90d9,color:#fff
+    style I fill:#27ae60,color:#fff
+    style L fill:#e74c3c,color:#fff
+    style Z fill:#95a5a6,color:#fff
+```
 ## 7. Mapa de estados de órdenes (CS-Cart 4.19.x)
-| Código | Nombre | Usado por Kueski |
+
+> Fuente: `cscart_statuses` / `cscart_status_descriptions` (type = 'O') en esta instalación.
+> Nota: Los registros pueden repetirse por idioma; el código es la referencia técnica.
+
+| Código | Nombre (según DB) | Usado por Kueski |
 | :--- | :--- | :--- |
-| **P** | Paid | Sí — webhook approved |
-| **C** | Complete | No — solo admin |
-| **O** | Open | No |
-| **F** | Failed | Sí — webhook denied |
+| **A** | Fraud checking | No |
+| **B** | Backordered | No |
+| **C** | Complete | No — solo admin (post-entrega) |
+| **D** | Declined | Sí — webhook denied |
+| **F** | Failed | No — solo errores técnicos |
 | **I** | Canceled | Sí — webhook canceled |
+| **O** | Open | No |
+| **P** | Paid | Sí — webhook approved |
+| **Y** | Awaiting call | No |
 | **R** | Reembolso solicitado | **Nuevo** — disparador addon |
 | **X** | Reembolsado | **Nuevo** — éxito automático |
 
-*Nota: **N (Incompleta)** es un estado interno hardcoded. No usar 
+*Nota: 
+- **N (Incompleta)** es un estado interno hardcoded. No usar 
 como disparador.*
-
+- Para refunds v1, el disparador es `new_status = R` y `old_status IN (P, C)`.  
+- En esta instalación no aparece un estado `N (Incomplete)` como status configurable tipo 'O'; CS-Cart puede manejar órdenes incompletas internamente.
 ---
 
 ## 8. Pendientes antes de implementar
@@ -231,3 +266,4 @@ como disparador.*
 - Respuesta síncrona HTTP 201 confirmada ✅
 - Campo `metadata: null` — no documentado en guía, ignorar ✅
 - Sin campo `amount` en body → reembolso total confirmado ✅
+- data.status = completed indica que sandbox no deja refunds en estado processing para este escenario.
