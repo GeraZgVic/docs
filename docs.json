@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "IMX Platform Documentation",
+  "name": "IMX Technical Documentation",
   "colors": {
     "primary": "#16A34A",
     "light": "#07C983",
@@ -15,10 +15,10 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "IMX Technical Documentation",
+        "tab": "Overview",
         "groups": [
           {
-            "group": "Overview",
+            "group": "IMX",
             "pages": ["index"]
           }
         ]
@@ -29,10 +29,10 @@
           {
             "group": "Payments",
             "pages": [
-              "ecommerce/kueski-pay/overview",
               {
                 "group": "Kueski Pay",
                 "pages": [
+                  "ecommerce/kueski-pay/overview",
                   {
                     "group": "Architecture",
                     "pages": [
@@ -56,18 +56,13 @@
         "groups": [
           {
             "group": "IMXTime",
-            "pages": []
+            "pages": ["internal/imxtime/overview"]
           }
         ]
       }
-    ],
-    "global": {}
+    ]
   },
-  "navbar": {
-    "links": []
-  },
-  "contextual": {
-    "options": ["copy", "view"]
-  },
+  "navbar": { "links": [] },
+  "contextual": { "options": ["copy", "view"] },
   "footer": {}
 }
