@@ -124,8 +124,16 @@ Defensa interna contra acciones duplicadas (doble-click/refresh). Kueski respond
 ---
 
 ## 8. Pendientes antes de implementar
-- Todas las preguntas de diseño están cerradas. El único prerrequisito antes de implementar es esperar el visto bueno de Brenda en la certificación.
-
+- Confirmar con Brenda (Kueski) la URL del endpoint de reembolsos 
+  en ambiente sandbox. La URL asumida por analogía con Create Payment es:
+  `https://payments-api.sandbox-pay.kueski.codes/api/refunds`
+  Esta inferencia será validada empíricamente con un curl real contra 
+  sandbox usando un `payment_id` aprobado antes de implementar.
+  Si Kueski confirma un host distinto, el cambio es de una línea en 
+  `resolveBaseUrl()`.
+- Todas las demás decisiones de diseño están cerradas. El único 
+  prerrequisito funcional antes de implementar es esperar el visto 
+  bueno de Brenda en la certificación.
 ---
 
 ## 9. Estimación
