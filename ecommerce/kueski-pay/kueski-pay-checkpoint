@@ -1,1 +1,838 @@
+# Kueski Pay (CS-Cart) — Checkpoint Técnico (DEV)
 
+Fecha: 2026-03-02
+Versión: **v1.12**
+Entorno: **DEV** (https://dev.importacionesamexico.com.mx/)
+Responsables: **Victor / Carlos**
+Objetivo: Módulo de Reembolsos — Diseño + Documentación Mintlify + Fix webhook denied→Declined.
+
+---
+
+## Changelog
+
+### v1.12 (2026-03-02 — Módulo Refunds + Documentación Mintlify)
+- `KueskiRefundException.php` creado y cerrado.
+  - Ruta: `app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiRefundException.php`
+  - Transporta metadata estructurada: `error_code`, `error_message`, `error_details`, `http_status`.
+  - `getCode()` heredado retorna 0 — `getHttpStatus()` es la única fuente del HTTP status.
+- Tabla `cscart_kueski_refunds` diseñada y cerrada (pendiente implementación en DB).
+- Diseño completo del módulo de reembolsos documentado en `.md` independiente (v2.1).
+- Diagrama Mermaid de flujo de refunds agregado al `.md` de reembolsos.
+- **Fix webhook:** `denied` ahora mapea a `D (Declined)` en lugar de `F (Failed)`.
+  - CS-Cart ya tiene estado `D (Declined)` nativo — no se creó nada nuevo.
+  - Semánticamente correcto: rechazo de crédito ≠ fallo técnico.
+  - Validado en DEV: orden 318 aparece como "Declined" ✅.
+- Documentación Mintlify iniciada en `ecommerce/kueski-pay/`:
+  - `overview.mdx` ✅
+  - `webhook.mdx` ✅
+  - `environments.mdx` ✅
+  - `payment-processor.mdx` ✅
+  - `create-payment.mdx` ✅
+  - `architecture/file-structure.mdx` — secciones 7 (árbol) y 8 (responsabilidades) agregadas ✅
+  - `architecture/database.mdx` ✅
+  - `refunds/overview.mdx` actualizado a v2.1 ✅
+- Certificación con Brenda: ⏳ En espera. `KueskiApi.php` y archivos existentes no tocados.
+
+### v1.11 (2026-02-28 — Correo certificación enviado a Brenda)
+- Correo de solicitud de certificación enviado a Brenda (Kueski).
+- Acceso de cliente en DEV compartido para que Brenda ejecute las 3 pruebas directamente.
+- Reportado error `Integrations with value 'API' is missing` al usar api_key propia en widget PDP — pendiente respuesta de Kueski para habilitación.
+- Confirmado con Brenda que Refunds no son requeridos para certificación (pendiente respuesta formal).
+- Certificación: Brenda ejecuta las 3 pruebas (Success, Denied, Cancelled) desde su lado usando el simulador. Rol del merchant: monitoreo de logs y BD.
+
+### v1.10 (2026-02-27 — Condicional min/max checkout)
+- `init.php` creado en `app/addons/kueski_pay/` — registra hook `get_payments_post` via `fn_register_hooks()`.
+  - Root cause: sin `init.php`, CS-Cart nunca cargaba las funciones de hook del addon en bootstrap.
+- `func.php`: hook `fn_kueski_pay_get_payments_post` implementado — oculta Kueski Pay server-side si total fuera de rango.
+- `addon.xml`: settings `kpay_min` (default: 60) y `kpay_max` (default: 25000) agregados — configurables desde el panel.
+- Investigación del problema de `processor_script` vacío:
+  - `payment_id=16` tenía `processor_id=0` — método creado como manual/offline, sin asociación al processor.
+  - `processor_script` llegaba vacío al hook, por lo que el match `=== 'kueski_pay.php'` nunca pegaba.
+- Estrategia de identificación robusta (doble lookup sin hardcodear `payment_id`):
+  1. Lookup por `processor_script='kueski_pay.php'` (cuando está bien registrado).
+  2. Fallback por nombre en `payment_descriptions` (`LIKE '%Kueski%'`) cuando `processor_id=0`.
+- Total leído desde `Tygh::$app['session']['cart']['total']` — correcto porque `fn_prepare_checkout_payment_methods()` se llama ANTES de `fn_calculate_cart_content()` en el controller (líneas 523 vs 532).
+- Guard `area === 'C'` — filtro solo en frontend, no afecta panel de administración.
+- Validado en DEV: Kueski se oculta correctamente con total > $25,000 y total < $60. ✅
+- Recomendación post-cert: ligar `payment_id=16` al `processor_id` correcto en PROD para que el lookup primario sea suficiente.
+
+### v1.9 (2026-02-27 — Widget PDP)
+- Widget Kueski Pay implementado en PDP via AB: Motivation Block + JS en `product.view`.
+- HTML: `#imx_kpay_card` + `#imx_kpay_mount` como contenedor dinámico del widget.
+- JS — bloque `KUESKI WIDGET`:
+  - `KPAY_AUTH`, `KPAY_SANDBOX`, `KPAY_INTEGRATION`, `KPAY_SRC` como constantes configurables.
+  - `loadKpayOnce()` — carga SDK dinámicamente, reemplaza script si src cambia.
+  - `initKpayOnce()` — inicializa `KueskipayAdvertising` una sola vez.
+  - `ensureKpayWidgetMounted()` — crea `<kueskipay-widget>` dinámicamente en `#imx_kpay_mount`.
+  - `updateKpayAmount(base)` — actualiza `data-kpay-widget-amount` en variaciones de producto.
+  - `bootKpayOnceSafe()` — orquesta carga + init con flags anti-loop.
+  - `hookMountObserverOnce()` — observer que espera que aparezca `#imx_kpay_mount`.
+- JS — bloque `KUESKI VISIBILITY`:
+  - `KPAY_MIN = 60`, `KPAY_MAX = 25000` (confirmados por Brenda).
+  - `updateKpayVisibility(base)` — oculta `#imx_kpay_card` si precio < $60 o > $25,000 MXN.
+  - `refreshAll()` actualizado con llamada a `updateKpayVisibility(base)`.
+- `api_key` actual: ejemplo de Kueski (`1cc65d6c-...`) — pendiente habilitación de api_key propia.
+- Widget Checkout descartado — confirmado por Brenda como no requerido.
+
+### v1.8 (2026-02-26 — Gap analysis)
+- Validación y descarte del gap "Duplicate Order ID" vs guía de integración Kueski.
+- Investigación del código fuente CS-Cart (`checkout.php` línea 936): `order_id = TIME . "_" . user_id` — único por timestamp, imposible repetirse en reintentos reales.
+- Validación práctica con órdenes 302 (`created`) y 303 (`created`) — cada intento genera `order_id` y `payment_id` distintos.
+- Conclusión: el bloque `kueski_is_reusable_mapping_status` nunca se dispara en reintentos reales. Solo aplica para doble-click/doble-submit, cubierto por session lock.
+- Sección 13 agregada con evidencia completa.
+
+### v1.7 (2026-02-26 — UX fixes)
+- Fix crítico `PAYMENT_NOTIFICATION`: `$notification` ahora lee `$mode` (string `'return'`/`'cancel'`) en lugar de `PAYMENT_NOTIFICATION` (CS-Cart lo define como `true` booleano).
+- Redirect `return`: ahora va a `checkout.complete?order_id=X` — antes redirigía al home.
+- Carrito limpio post-approved: `fn_clear_cart()` + `fn_save_cart_content()` en bloque `return`.
+- `cancel`: mantiene carrito intacto para permitir reintento ✅ (comportamiento correcto, sin cambios).
+- Root cause documentado: CS-Cart define `PAYMENT_NOTIFICATION=true` en `payment_notification.php`; distinción `return`/`cancel` viene de `$mode`.
+
+### v1.7 (2026-02-25)
+- `addon.xml`: agregado variant `testing` en selector `mode` + language variables + versión incrementada a `1.0.1`.
+- `kueski_pay.php`: fix whitelist de ambientes — acepta `sandbox | testing | production` (antes `testing` era forzado a `sandbox`).
+- `kueski_pay.php`: comentario de `$environment` actualizado a `'sandbox' | 'testing' | 'production'`.
+- `KueskiApi.php`: guard de host robusto — normaliza lowercase + quita puerto (`:443`, `:8080`) con `preg_replace`.
+- `KueskiApi.php`: `error_log` de headers y `ENV DEBUG` consolidados en un solo bloque `dev.*` — sin duplicidad.
+- `KueskiApi.php`: `$this->log()` eliminado de `outbound headers` y `ENV DEBUG` (reduce falsos "error" en logs del sistema).
+- `KueskiApi.php`: bloque `non-2xx` duplicado eliminado — queda solo el correcto con `$summary`.
+- `KueskiApi.php`: throw enriquecido — incluye `error_code` + `error_message` de Kueski en la excepción.
+- BD (manual): `UPDATE cscart_payments SET processor_id=105 WHERE payment_id=16` — re-vincula método de pago tras reinstalación.
+- Hallazgo documentado: `processor_id=0` como root cause del "felicidades inmediato" sin ejecutar processor.
+- Validación end-to-end del selector: sandbox/testing/production pegan a las URLs correctas en runtime con evidencia en logs.
+- Commits: `feat(kueski_pay): certification hardening v1.5` + `feat(kueski_pay): environment selector hardening + pre-GoLive cleanup`.
+
+### v1.6 (2026-02-25)
+- Basic Auth removido del entorno DEV para evitar fricción en callbacks y pruebas.
+- `KueskiApi.php`: `curl_close` garantizado con `try/finally` (PHP 7.x + 8.x compat).
+- `KueskiApi.php`: `resolveBaseUrl()` corregido — `staging/testing` → `https://testing.kueskipay.com` (antes caía a sandbox).
+- `KueskiApi.php`: `getOptionalKpHeaders()` hardcodeado con `Kp-Name`, `Kp-Version`, `Kp-Source`, `Kp-Trigger` para trazabilidad en certificación.
+- `KueskiApi.php`: `JSON_PRESERVE_ZERO_FRACTION` en `json_encode` del payload.
+- `KueskiApi.php`: log DEV-only de headers outbound sanitizados antes de `curl_exec`.
+- `kueski_pay.php`: regla de oro de reintento por status (`created` → reusar, `approved` → order details, `denied/canceled/cancelled` → nuevo payment).
+- `kueski_pay.php`: session lock con overwrite directo (sin patrón `unset + set`).
+- `kueski_pay.php`: DB-level idempotency con validación de status en ambos puntos de reutilización.
+- `kueski_pay.php`: `round(..., 2)` para precisión decimal en `total`, `price` y `tax`.
+- `kueski_pay.php`: payload evidence log antes de `createPayment()`.
+- `kueski_pay.php`: `approved` → redirect a detalle de orden con notice.
+- `kueski_pay.php`: `denied/canceled/cancelled` → crear nuevo payment (UPSERT sobrescribe mapping).
+- 3 flujos E2E validados en Sandbox (evidencia limpia, sin Basic Auth): CANCELED (259→I), APPROVED (260→P), LATE WEBHOOK (reject, orden 260 sin cambio).
+- Gap check payload vs guía Kueski completado y cerrado.
+- Evidencia de headers `Kp-*` confirmada en request real (order 270).
+- Commit: `feat(kueski_pay): certification hardening v1.5`.
+
+### v1.5 (2026-02-24)
+- Webhook endurecido con guard de validación antes de cualquier modificación de orden.
+- Guard 1: `order_id` debe ser numérico mayor a 0.
+- Guard 2: la orden debe existir en `cscart_orders`.
+- Guard 3: debe existir mapping válido `order_id ↔ payment_id` en `cscart_kueski_payments`.
+- `approved` con guard inválido → `reject` (merchant cannot fulfill).
+- `denied/canceled/cancelled` con guard inválido → `ok` (no bloquear).
+- En todos los casos inválidos: se guarda evidencia, no se toca ninguna orden.
+- Refactoring: INSERT IGNORE extraído a closure `$save_event` (single source of truth).
+- Fix `$respond()`: `exit` en lugar de `return` cuando faltan credenciales (evita logs confusos).
+- 3 flujos E2E validados en Sandbox con UI oficial: SUCCESS (P), CANCEL (I), DECLINE (F).
+
+### v1.4 (2026-02-24)
+- Payment Processor (`payments/kueski_pay.php`) implementado y validado en Sandbox.
+- Corrección de credenciales: lectura desde `Registry::get('addons.kueski_pay.*')`.
+- Corrección de constructor `KueskiApi($environment, $public_key)` — orden de parámetros alineado.
+- Detección robusta de entorno: `strtolower(trim($mode))` con fallback a `sandbox`.
+- Payload limpio: `items` solo si no está vacío, `amount.total` redondeado, `currency` fijo MXN.
+- Templates registrados: `processor_template` y `admin_template` creados y verificados en BD.
+- `func.php` actualizado: registra processor en `cscart_payment_processors` en install, lo elimina y deshabilita métodos de pago en uninstall.
+- Webhook actualizado: ahora actualiza `cscart_kueski_payments.status` y llama `fn_change_order_status()`.
+- `KueskiApi.php`: fix de logging en errores HTTP 400 — lee `code`/`message` desde root del body + `body_snippet` para diagnóstico.
+- Flujo end-to-end validado en Sandbox: Create → Redirect → Webhook → Orden marcada como Paid.
+
+### v1.3 (2026-02-23)
+- Validación de capa API contra Sandbox (`KueskiApi.php`).
+- Endpoint temporal `dispatch=kueski.test_create` creado, validado y eliminado.
+- Tabla `cscart_kueski_payments` agregada para persistencia de mapping `order_id ↔ payment_id`.
+- Credenciales correctamente diferenciadas: `api_key` (Create Payment) y `api_secret` (JWT webhook).
+- Base URL dinámica según entorno (Sandbox / Producción).
+
+### v1.2 (2026-02-23)
+- Fix definitivo de traducciones del addon mediante archivos `.po`.
+- Eliminación total de dependencia de `cscart_language_values` para labels del panel.
+- `func.php` simplificado (solo lógica de instalación de tablas).
+- Implementación de `JwtService` (HS256) y emisión de header `Authorization: Bearer` en la respuesta del webhook.
+- Campos `amount` y `status_reason` agregados a la tabla y al webhook.
+- Webhook validado con credenciales Sandbox reales.
+
+### v1.1 (2026-02-21)
+- Implementación de `INSERT IGNORE` para manejo de duplicados concurrentes.
+- Fix variable `$raw_payload` → `$raw`.
+
+### v1.0 (2026-02-21)
+- Webhook inicial con auditoría e idempotencia.
+
+---
+
+## 1) Contexto (correo Kueski)
+
+Kueski solicita:
+1. **Creación de pago (API)** con parámetros mínimos: `order_id`, `description`, `amount`, `items`, `shipping` (si aplica), `callbacks`.
+2. **Merchant response (Webhook / Listener)**: Kueski notifica el estatus final del Loan. El proceso finaliza cuando el merchant recibe y responde correctamente.
+3. **Autenticación**: JWT HS256 firmado con `api_secret`, enviado como header `Authorization: Bearer` en la respuesta del webhook.
+4. **Widgets** (detalle de producto y resumen de carrito).
+5. **Certificación**: 3 pruebas (Success, Denied, Cancelled).
+
+---
+
+## 2) Webhook — Estado actual ✅
+
+### 2.1 Endpoint DEV
+
+| Parámetro | Valor |
+|---|---|
+| URL | `https://dev.importacionesamexico.com.mx/index.php?dispatch=kueski.webhook` |
+| Método | POST |
+| Content-Type | application/json |
+| Respuesta | HTTP 200 + header `Authorization: Bearer {JWT}` + body JSON |
+
+> Endpoint disponible públicamente vía HTTPS. Basic Auth deshabilitado en DEV para permitir acceso desde Kueski.
+
+### 2.2 Matriz de respuesta y acciones internas
+
+| Status entrante | Guard | Respuesta | Acción CS-Cart |
+|---|---|---|---|
+| `approved` | ✅ válido | `accept` | `fn_change_order_status($order_id, 'P')` — Paid |
+| `approved` | ❌ inválido | `reject` | Ninguna — solo auditoría |
+| `denied` | ✅ válido | `ok` | `fn_change_order_status($order_id, 'D')` — Declined |
+| `denied` | ❌ inválido | `ok` | Ninguna — solo auditoría |
+| `canceled` | ✅ válido | `ok` | `fn_change_order_status($order_id, 'I')` — Canceled |
+| `canceled` | ❌ inválido | `ok` | Ninguna — solo auditoría |
+| `cancelled` | ✅/❌ | `ok` | Igual que `canceled` |
+| (desconocido) | — | `ok` | Solo registrado con warning en logs |
+
+### 2.3 Guard de seguridad (v1.5)
+
+Validaciones ejecutadas **antes** de cualquier `fn_change_order_status()` o `UPDATE ?:kueski_payments`:
+
+1. `order_id` es numérico y mayor a 0
+2. La orden existe en `cscart_orders`
+3. Existe mapping válido en `cscart_kueski_payments` con coincidencia de `order_id` y `payment_id`
+
+En cualquier fallo de guard:
+- Se guarda evidencia en `cscart_kueski_webhook_events`
+- No se modifica ninguna orden
+- No se actualiza el mapping interno
+- Se responde con JWT válido
+
+### 2.4 Idempotencia
+
+- Evento único definido por la llave: **(payment_id, status)**
+- Si llega el mismo evento dos veces, no se duplica el registro, no se vuelve a cambiar el estado de la orden, y se responde con el mismo `response_status`.
+- Implementado con `INSERT IGNORE` + `UNIQUE KEY (payment_id, status)`.
+
+### 2.5 JWT (outbound)
+
+- Generado por `JwtService::generateHs256()` en cada respuesta HTTP 200.
+- Algoritmo: **HS256**, firmado con `api_secret`.
+- Payload: `public_key`, `iat`, `exp` (iat + 300s), `jti` (SHA256 de `api_secret:iat`).
+- Emitido como header: `Authorization: Bearer {token}`.
+- Credenciales leídas desde settings del addon vía `Registry::get('addons.kueski_pay.*')`.
+- Si faltan credenciales: responde HTTP 500 y termina con `exit` (no continúa ejecución).
+
+#### Ejemplo de JWT generado en Sandbox
+
+**Header (Base64Url-decoded):**
+```json
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+
+**Payload (Base64Url-decoded):**
+```json
+{
+  "public_key": "f98c02ed-3906-4f00-8ca9-e744d0048131",
+  "iat": 1771882197,
+  "exp": 1771882497,
+  "jti": "sha256(api_secret:iat)"
+}
+```
+
+---
+
+## 3) Payment Processor — Estado actual ✅
+
+### 3.1 Archivo
+```
+app/addons/kueski_pay/payments/kueski_pay.php
+```
+
+### 3.2 Flujo implementado
+```
+Create Payment → Persistir mapping → Redirect al widget → Webhook actualiza orden
+```
+
+### 3.3 Lógica principal (POST)
+
+- Lee credenciales desde `Registry::get('addons.kueski_pay.*')`.
+- Detecta entorno: `strtolower(trim($mode))` — acepta `sandbox`, `testing`, `production`. Fallback a sandbox si valor inválido.
+- Construye payload con `order_id`, `description`, `amount.total` (redondeado con `round(...,2)`), `currency=MXN`, `callbacks` HTTPS.
+- `items` solo se incluye en el payload si el array no está vacío.
+- Loggea payload completo antes de llamar a Kueski (DEV-only evidence).
+- Llama a `KueskiApi->createPayment($payload)`.
+- Persiste mapping en `cscart_kueski_payments` con `INSERT ... ON DUPLICATE KEY UPDATE`.
+- Redirige al cliente a `callback_url`.
+
+### 3.4 Regla de oro de reintento por status (v1.6)
+
+Aplica en dos puntos: session lock y DB-level idempotency.
+
+| Status en BD | Acción |
+|---|---|
+| `created` | Reusar `callback_url` — redirect directo |
+| `approved` | Redirect a detalle de orden + notice (no recrear pago) |
+| `denied` / `canceled` / `cancelled` | Crear nuevo payment — UPSERT sobrescribe mapping |
+| (vacío / desconocido) | Permitir flujo normal |
+
+### 3.5 Idempotencia del processor
+
+- **Session lock**: overwrite directo del timestamp (sin patrón `unset + set`).
+- **DB check**: reutiliza mapping solo si `status=created`. Si es terminal, crea nuevo payment.
+
+### 3.6 PAYMENT_NOTIFICATION (return/cancel)
+
+- Solo para UX — no finaliza la orden.
+- `return`: muestra mensaje "confirmando pago" y redirige a detalle de orden.
+- `cancel`: muestra mensaje de cancelación y redirige al checkout.
+
+---
+
+## 4) Create Payment — Capa API ✅
+
+### 4.1 Implementación técnica
+```
+app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiApi.php
+```
+
+**Constructor:**
+```php
+__construct(string $environment, string $public_key)
+```
+
+**Configuración:**
+
+| Parámetro | Valor |
+|---|---|
+| Base URL Sandbox | `https://payments-api.sandbox-pay.kueski.codes` |
+| Base URL Staging | `https://testing.kueskipay.com` |
+| Base URL Producción | `https://api.kueskipay.com` |
+| Autenticación | `Authorization: Bearer {public_key}` |
+| connect_timeout | 5s |
+| timeout total | 20s |
+
+**Fixes v1.6 / v1.7:**
+- `curl_close` garantizado con `try/finally` (compatible PHP 7.x resource + PHP 8.x CurlHandle).
+- `resolveBaseUrl()`: `staging/stage/testing/test` → `https://testing.kueskipay.com` (antes caía a sandbox).
+- `getOptionalKpHeaders()`: hardcodeado con `Kp-Name: cscart`, `Kp-Version: 1.5.0`, `Kp-Source: ecommerce`, `Kp-Trigger: checkout`.
+- `JSON_PRESERVE_ZERO_FRACTION` en `json_encode` del payload.
+- Log DEV-only de headers outbound sanitizados (Authorization enmascarada) antes de `curl_exec`.
+- Guard de host robusto: `strtolower(preg_replace('/:\\d+$/', '', $host))` — elimina puerto y normaliza.
+- `error_log` de headers y `ENV DEBUG` en un solo bloque `dev.*` sin duplicidad ni falsos errors.
+- Throw enriquecido: incluye `error_code` + `error_message` de Kueski en la excepción.
+
+**Resolución de entornos:**
+
+| Valor `mode` | Base URL |
+|---|---|
+| `sandbox`, `pruebas` | `https://payments-api.sandbox-pay.kueski.codes` |
+| `staging`, `stage`, `testing`, `test` | `https://testing.kueskipay.com` |
+| `production`, `prod`, `produccion` | `https://api.kueskipay.com` |
+| (cualquier otro) | `https://payments-api.sandbox-pay.kueski.codes` (fallback seguro) |
+
+**Manejo de errores HTTP 400:**
+- Lee `code` y `message` desde root del body: `$body_array['code']`, `$body_array['message']`.
+- Fallback a `$body_array['error']['code']` para compatibilidad.
+- Incluye `body_snippet` (primeros 800 chars) en logs para diagnóstico en DEV.
+
+### 4.2 Persistencia de mapping
+
+Tabla: `cscart_kueski_payments`
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `order_id` | INT UNSIGNED | UNIQUE |
+| `payment_id` | VARCHAR(64) | UNIQUE |
+| `callback_url` | TEXT | URL de redirección al widget |
+| `status` | VARCHAR(32) | `created` → `approved` / `denied` / `canceled` |
+| `created_at` | INT UNSIGNED | Timestamp UNIX |
+| `updated_at` | INT UNSIGNED | Timestamp UNIX |
+
+### 4.3 Credenciales diferenciadas
+
+| Setting | Valor proporcionado por Kueski | Uso |
+|---|---|---|
+| `public_key` | API Public Key | `Authorization: Bearer {public_key}` en Create Payment |
+| `api_secret` | API Secret | Firma JWT HS256 en respuesta del webhook |
+
+> No existe campo `api_key` separado. La `public_key` es el API Public Key de Kueski y se usa directamente como Bearer token.
+
+---
+
+## 5) Estructura del addon (DEV)
+
+Ruta base: `~/platform/webs/development/app/addons/kueski_pay/`
+```
+addon.xml
+func.php
+init.php
+payments/
+  kueski_pay.php
+controllers/
+  frontend/
+    kueski.php
+Tygh/
+  Addons/
+    KueskiPay/
+      Services/
+        JwtService.php
+        KueskiApi.php
+        KueskiRefundException.php
+var/langs/
+  en/addons/kueski_pay.po
+  es/addons/kueski_pay.po
+```
+
+Templates (fuera del addon, en `design/`):
+```
+design/themes/responsive/templates/addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl
+design/backend/templates/addons/kueski_pay/views/payments/components/cc_processors/kueski_pay.tpl
+```
+
+---
+
+## 6) Instalación / Activación (CS-Cart)
+
+### 6.1 Compatibilidad
+CS-Cart en DEV: **4.19.1.SP2**. Se ajustó `addon.xml` para no bloquear instalación por versión.
+
+### 6.2 Funciones de instalación
+
+**Install:**
+- Crea `cscart_kueski_webhook_events`
+- Crea `cscart_kueski_payments`
+- Registra processor en `cscart_payment_processors` (con guard `IF NOT EXISTS`)
+
+**Uninstall:**
+- Deshabilita métodos de pago que usaban el processor (evita checkout roto)
+- Elimina registro de `cscart_payment_processors`
+- Droppea ambas tablas
+
+### 6.3 Settings del addon
+
+| Setting | Tipo | Uso real |
+|---|---|---|
+| `public_key` | input | API Public Key de Kueski — utilizada como `Authorization: Bearer {public_key}` en Create Payment |
+| `api_secret` | password | API Secret de Kueski — utilizada para firmar JWT HS256 en la respuesta del webhook |
+| `mode` | selectbox | Entorno de operación: `sandbox` / `testing` / `production` |
+
+**Nota técnica sobre credenciales**
+En esta implementación no existe un campo separado denominado `api_key`.
+La `public_key` proporcionada por Kueski es utilizada directamente como
+`Authorization: Bearer {public_key}` en la operación **Create Payment**.
+El campo `api_secret` se utiliza exclusivamente para firmar el JWT
+(algoritmo HS256) que se envía en el header `Authorization: Bearer`
+de la respuesta del webhook (Merchant response).
+Esta separación cumple con el modelo de autenticación definido por Kueski:
+- **Bearer Token (public_key)** → Creación de pagos
+- **JWT firmado con api_secret** → Respuesta del webhook
+
+### 6.4 Registro del processor verificado en BD
+
+| processor_id | processor | processor_script | processor_template | admin_template | callback | addon |
+|---|---|---|---|---|---|---|
+| 104 | Kueski Pay | kueski_pay.php | addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl | kueski_pay.tpl | Y | kueski_pay |
+
+---
+
+## 7) Base de datos
+
+### 7.1 Tabla `cscart_kueski_webhook_events`
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `event_id` | INT UNSIGNED AUTO_INCREMENT | PK |
+| `payment_id` | VARCHAR(64) | |
+| `order_id` | VARCHAR(64) | |
+| `status` | VARCHAR(32) | |
+| `response_status` | VARCHAR(16) | |
+| `amount` | DECIMAL(12,2) NULL | Del payload IPN de Kueski |
+| `status_reason` | VARCHAR(255) NULL | Del payload IPN de Kueski |
+| `received_at` | INT UNSIGNED | Timestamp UNIX |
+| `raw_payload` | MEDIUMTEXT NULL | |
+
+Índices:
+- `UNIQUE KEY (payment_id, status)`
+- `KEY idx_order_id (order_id)`
+
+### 7.2 Tabla `cscart_kueski_payments`
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `id` | INT UNSIGNED AUTO_INCREMENT | PK |
+| `order_id` | INT UNSIGNED | UNIQUE |
+| `payment_id` | VARCHAR(64) | UNIQUE |
+| `callback_url` | TEXT | URL de redirección al widget |
+| `status` | VARCHAR(32) | `created` → actualizado por webhook |
+| `created_at` | INT UNSIGNED | Timestamp UNIX |
+| `updated_at` | INT UNSIGNED | Timestamp UNIX |
+
+Índices:
+- `UNIQUE KEY uk_order_id (order_id)`
+- `UNIQUE KEY uk_payment_id (payment_id)`
+- `KEY idx_status (status)`
+
+### 7.3 Tabla `cscart_kueski_refunds` ⏳ Diseño cerrado — pendiente implementación
+```sql
+CREATE TABLE IF NOT EXISTS `cscart_kueski_refunds` (
+    `id`            INT UNSIGNED    NOT NULL AUTO_INCREMENT,
+    `order_id`      INT UNSIGNED    NOT NULL,
+    `payment_id`    VARCHAR(64)     NOT NULL,
+    `refund_id`     VARCHAR(64)     NULL,
+    `amount`        DECIMAL(12,2)   NOT NULL,
+    `reason`        VARCHAR(32)     NOT NULL DEFAULT 'merchant_refund',
+    `status`        VARCHAR(32)     NOT NULL,
+    `error_code`    VARCHAR(64)     NULL,
+    `error_message` TEXT,
+    `error_details` TEXT,
+    `old_status`    VARCHAR(8)      NOT NULL,
+    `created_at`    INT UNSIGNED    NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_kueski_refunds_order`   (`order_id`),
+    UNIQUE KEY `uk_kueski_refunds_payment` (`payment_id`),
+    KEY        `idx_kueski_refunds_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+---
+
+## 8) Evidencia de pruebas (DEV)
+
+### 8.1 TEST — Flujo completo Sandbox — SUCCESS ✅
+
+order_id: 254 | payment_id: 956745772903145
+
+Secuencia validada:
+1. Cliente selecciona Kueski Pay en checkout
+2. `kueski_pay.php` llama a `POST /v1/payments` → recibe `payment_id` + `callback_url`
+3. Mapping guardado en `cscart_kueski_payments` con `status=created`
+4. Cliente redirigido a `sandbox-ui.kueski.com`
+5. Cliente autoriza pago en simulador Kueski
+6. Kueski envía IPN al webhook con `status=approved`
+7. Guard pasa: order existe + mapping válido
+8. Webhook responde `{"status":"accept"}` con header `Authorization: Bearer <JWT>`
+9. `cscart_kueski_payments.status` → `approved`
+10. `cscart_orders.status` → `P` (Paid)
+11. Cliente redirigido de vuelta al sitio (UX return)
+```sql
+SELECT status FROM cscart_kueski_payments WHERE order_id = 254; -- approved ✅
+SELECT status FROM cscart_orders WHERE order_id = 254;          -- P ✅
+```
+
+### 8.2 TEST — Flujo completo Sandbox — CANCEL ✅
+
+order_id: 255 | payment_id: 956747851274810
+```sql
+SELECT status FROM cscart_kueski_payments WHERE order_id = 255; -- canceled ✅
+SELECT status FROM cscart_orders WHERE order_id = 255;          -- I ✅
+```
+
+### 8.3 TEST — Flujo completo Sandbox — DECLINE ✅
+
+order_id: 256 | payment_id: 956748421700156
+```sql
+SELECT status FROM cscart_kueski_payments WHERE order_id = 256; -- denied ✅
+SELECT status FROM cscart_orders WHERE order_id = 256;          -- D ✅
+```
+
+> **Nota:** A partir de v1.12 el estado `denied` mapea a `D (Declined)` en lugar de `F (Failed)`.
+> Los registros anteriores a v1.12 (órdenes 256, 287) muestran `F` — esto es histórico y correcto.
+
+### 8.4 TEST — Guard: order_id no numérico ✅
+```bash
+curl -X POST 'https://dev.importacionesamexico.com.mx/index.php?dispatch=kueski.webhook' \
+  -H 'Content-Type: application/json' \
+  -d '{"payment_id":"TEST_FIX_BAD_001","order_id":"ORDER-XYZ","status":"denied"}'
+```
+- HTTP 200 ✅ | Body: `{"status":"ok"}` ✅ | Ninguna orden modificada ✅
+
+### 8.5 TEST — Guard: approved con mapping inválido ✅
+```bash
+curl -X POST 'https://dev.importacionesamexico.com.mx/index.php?dispatch=kueski.webhook' \
+  -H 'Content-Type: application/json' \
+  -d '{"payment_id":"TEST_FIX_MISMATCH_001","order_id":"253","status":"approved"}'
+```
+- HTTP 200 ✅ | Body: `{"status":"reject"}` ✅ | Orden 253 no marcada como Paid ✅
+
+### 8.6 TEST — Idempotencia (no duplica, no re-procesa orden) ✅
+```sql
+SELECT COUNT(*) FROM cscart_kueski_webhook_events WHERE payment_id='TEST_IDEMP_001'; -- 1 ✅
+```
+Logs: 1 procesamiento normal + 2 `OUT (idempotent)` ✅
+
+### 8.7 TEST — Race condition (20 concurrentes) ✅
+```sql
+SELECT COUNT(*) FROM cscart_kueski_webhook_events WHERE payment_id='TEST_RACE_001'; -- 1 ✅
+```
+Logs: 1 procesamiento normal + 19 idempotentes ✅
+
+### 8.8 TEST — Webhook + JWT — Approved ✅
+```http
+HTTP/2 200
+Authorization: Bearer <JWT_HS256>
+Content-Type: application/json
+
+{"status":"accept"}
+```
+
+### 8.9 TEST — Webhook + JWT — Denied ✅
+```http
+HTTP/2 200
+Authorization: Bearer <JWT_HS256>
+Content-Type: application/json
+
+{"status":"ok"}
+```
+
+### 8.10 TEST — CANCELED limpio (sin Basic Auth) ✅
+
+order_id: 259 | payment_id: 957023060531791 | Fecha: 2026-02-25
+```sql
+SELECT order_id, payment_id, status FROM cscart_kueski_payments WHERE order_id = 259;
+-- 259 | 957023060531791 | canceled ✅
+
+SELECT order_id, status FROM cscart_orders WHERE order_id = 259;
+-- 259 | I ✅
+```
+
+### 8.11 TEST — APPROVED limpio (sin Basic Auth) ✅
+
+order_id: 260 | payment_id: 957024789277449 | Fecha: 2026-02-25
+```sql
+SELECT order_id, payment_id, status FROM cscart_kueski_payments WHERE order_id = 260;
+-- 260 | 957024789277449 | approved ✅
+
+SELECT order_id, status FROM cscart_orders WHERE order_id = 260;
+-- 260 | P ✅
+```
+
+### 8.12 TEST — Late Webhook Defense ✅
+
+payment_id viejo (canceled, orden 259): `957023060531791`
+order_id objetivo (approved, orden 260): `260`
+```http
+HTTP/2 200
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
+
+{"status":"reject"}
+```
+```sql
+SELECT order_id, status FROM cscart_orders WHERE order_id = 260;              -- P ✅ (sin cambio)
+SELECT order_id, payment_id, status FROM cscart_kueski_payments WHERE order_id = 260;
+-- 260 | 957024789277449 | approved ✅ (sin cambio)
+```
+
+### 8.13 TEST — Gap check payload vs guía Kueski ✅
+
+Payload real observado (orders 259/260/267 — consistente):
+```json
+{
+  "order_id": "259",
+  "description": "Order #259",
+  "amount": { "total": 25099, "currency": "MXN" },
+  "callbacks": { "on_success": "https://...", "on_reject": "https://...", "on_canceled": "https://...", "on_failed": "https://..." },
+  "items": [{ "name": "...", "description": "...", "quantity": 1, "price": 25099, "currency": "MXN", "sku": "...", "tax": 0 }]
+}
+```
+
+### 8.14 TEST — Evidencia headers Kp-* en request real ✅
+
+order_id: 270 | payment_id: 957047056272186 | Fecha: 2026-02-25
+
+| Header | Valor | Estado |
+|---|---|---|
+| `Content-Type` | `application/json` | ✅ |
+| `Authorization` | `Bearer ****048131` (sanitizado) | ✅ |
+| `Kp-Name` | `cscart` | ✅ |
+| `Kp-Version` | `1.5.0` | ✅ |
+| `Kp-Source` | `ecommerce` | ✅ |
+| `Kp-Trigger` | `checkout` | ✅ |
+
+### 8.15 TEST — Validación selector de ambiente ✅
+
+| Modo | base_url | Estado |
+|---|---|---|
+| `sandbox` | `https://payments-api.sandbox-pay.kueski.codes` | ✅ |
+| `testing` | `https://testing.kueskipay.com` | ✅ |
+| `production` | `https://api.kueskipay.com` | ✅ (pendiente credenciales) |
+
+### 8.16 TEST — Suite de validación edge-cases ✅
+
+| Escenario | order_id | Resultado |
+|---|---|---|
+| Abandono | 285 | ✅ Orden `N`, 0 webhooks, mapping `created` |
+| Reintento real (callback_url) | 288 | ✅ Sin duplicación, mapping intacto |
+| Cancelación | 285 | ✅ Orden `I`, webhook `ok` |
+| Declined | 287 | ✅ Orden `D`, webhook `ok` |
+| Idempotencia real (3x replay) | 287 | ✅ 1 evento, sin efecto adicional |
+| Late webhook defense | 289 | ✅ `reject`, orden `N`, auditoría ✅ |
+
+### 8.17 TEST — UX post-pago: checkout.complete + carrito limpio ✅
+```
+payment_notification.return → 302 → checkout.complete?order_id=300 → 200 ✅
+```
+
+### 8.18 TEST — Fix denied → Declined ✅
+
+order_id: 318 | Fecha: 2026-03-02
+
+- Webhook recibido con `status=denied` ✅
+- Orden marcada como `D (Declined)` en CS-Cart ✅
+- Badge "Declined" visible en panel de administración ✅
+
+---
+
+## 9) Nota sobre Sandbox UI
+
+Después de agregar `fn_change_order_status()`, el webhook tarda algunos milisegundos más en responder. La UI del Sandbox de Kueski puede no avanzar automáticamente al siguiente paso y requerir click manual. Esto **no es un error de integración** — en producción real el flujo es asíncrono y no depende de la UI del simulador.
+
+---
+
+## 10) Pendientes
+
+### 10.1 Pre-certificación con Brenda — COMPLETADO ✅
+
+- [x] Evidencia limpia: CANCELED (259→I), APPROVED (260→P), LATE WEBHOOK (reject) ✅
+- [x] Gap check payload vs guía Kueski ✅
+- [x] Evidencia headers `Kp-*` en request real (order 270) ✅
+- [x] Correo de solicitud de certificación enviado a Brenda (2026-02-28) ✅
+
+### 10.2 Antes de Go-Live (crítico)
+
+1. ~~**Validar selector de ambiente real**~~ — ✅ Completado (v1.7).
+2. ~~**Widgets PDP**~~ ✅ — Frontend completo. **Pendiente respuesta de Brenda** para habilitación de api_key propia.
+3. ~~**Condicional min/max amount en checkout**~~ — ✅ Completado en v1.10.
+4. ~~**Pruebas de UX real en CS-Cart**~~ — ✅ Validado (v1.7).
+5. **Certificación formal** — ⏳ En espera de respuesta de Brenda.
+6. **Módulo de Reembolsos** — ⏳ Implementación pendiente post-certificación.
+
+### 10.3 Post-certificación / hardening
+
+- Apagar logs sensibles (`payload` y `headers`) en modo producción
+- Rate limiting / IP allowlist (si Kueski lo requiere)
+- Rollback plan
+- Observabilidad (métricas / alertas)
+- `sanitizeUrl()` en `KueskiApi.php` — refactorizar si se agregan query params con datos sensibles
+- Condicionar/eliminar `ENV DEBUG` y `outbound headers` antes de PROD
+- Formalizar fix de `processor_id` en `fn_kueski_pay_install()` para evitar el problema en reinstalaciones futuras
+- Shipping y Billing objects en payload (opcionales, recomendados pre-GoLive)
+
+---
+
+## 11) Resumen de estado actual
+
+| Componente | Estado |
+|---|---|
+| Webhook core | ✅ Estable |
+| Idempotencia | ✅ Blindada |
+| Race condition | ✅ Cubierta (20 concurrentes) |
+| JWT outbound (HS256) | ✅ Implementado y probado |
+| Guards webhook | ✅ Validados |
+| Settings addon (panel) | ✅ Funcional con `.po` |
+| Capa API (`KueskiApi.php`) | ✅ Validada y hardened v1.6 |
+| Payment Processor | ✅ Implementado y hardened v1.6 |
+| Regla de oro de reintento | ✅ Implementada y validada |
+| Precisión decimal (round + JSON) | ✅ Validada contra Sandbox |
+| Headers `Kp-*` outbound | ✅ Hardcodeados y verificados |
+| Templates (frontend + admin) | ✅ Creados y registrados |
+| `func.php` (install/uninstall) | ✅ Completo |
+| Flujos E2E Sandbox | ✅ Validados |
+| Late Webhook Defense | ✅ Validada |
+| Selector de ambiente | ✅ Validado |
+| Widgets PDP (frontend) | ✅ Implementado y validado (v1.9) |
+| Widgets PDP (api_key habilitación) | ⏳ Pendiente respuesta Brenda |
+| Widgets Checkout | ✅ No requerido (confirmado Brenda) |
+| Condicional min/max monto | ✅ Implementado (v1.10) |
+| Fix denied → D (Declined) | ✅ Aplicado y validado (v1.12) |
+| `KueskiRefundException.php` | ✅ Creado y cerrado (v1.12) |
+| Tabla `cscart_kueski_refunds` | ✅ Diseño cerrado — pendiente implementación |
+| Módulo Refunds completo | ⏳ Pendiente post-certificación |
+| Certificación formal con Brenda | ⏳ En espera |
+| Logs sensibles en PROD | ⏳ Post-cert |
+| Rollback plan | ⏳ Post-cert |
+| Documentación Mintlify | ✅ Iniciada (v1.12) |
+
+---
+
+## 12) Checklist de cobertura vs Guía de Integración Kueski Pay
+
+| Sección | Descripción | Estado |
+|---|---|---|
+| **1. Create Payment** | `POST /v1/payments` | ✅ |
+| — Headers Kp-* | `Kp-Name`, `Kp-Version`, `Kp-Source`, `Kp-Trigger` | ✅ |
+| — Amount Object | `total`, `currency`, `details` | ✅ |
+| — Item Object | `name`, `description`, `quantity`, `price`, `currency`, `sku`, `tax` | ✅ |
+| — Callbacks Object | `on_success`, `on_reject`, `on_canceled`, `on_failed` | ✅ |
+| — Duplicate Order ID | Manejo por status (created/approved/terminal) | ✅ |
+| — Shipping Object | Opcional | ⚠️ Pendiente post-cert |
+| — Billing Object | Opcional | ⚠️ Pendiente post-cert |
+| **2. IPN / Webhook** | Recepción + respuesta JWT HS256 | ✅ |
+| — Guards | `order_id` numérico, orden existe, mapping válido | ✅ |
+| — Idempotencia | `INSERT IGNORE` + `UNIQUE KEY (payment_id, status)` | ✅ |
+| — Race condition | 20 concurrentes validados | ✅ |
+| **3. Refunds** | `POST /api/refunds` | ⏳ En implementación |
+| **4. Validate API Keys** | `GET /v1/validate-keys` | ⏳ Post-cert |
+| **Widgets** | PDP — frontend ✅ / api_key pendiente habilitación por Kueski | ⚠️ Parcial |
+| **Widgets** | Checkout — no requerido (confirmado por Brenda) | ✅ Descartado |
+| **Condicional min/max amount** | Ocultar Kueski Pay si fuera de límites | ✅ Implementado (v1.10) |
+
+---
+
+## 13) Validación — Duplicate Order ID (Gap descartado)
+
+**Fecha:** 2026-02-26
+
+**Conclusión:** Gap descartado. CS-Cart genera `order_id` único por intento via `TIME . "_" . user_id`. El único escenario de reutilización es doble-click, cubierto por session lock.
+
+---
+
+## 14) Widget Kueski Pay — PDP
+
+**Fecha:** 2026-02-27
+
+### Configuración actual (certificación)
+```javascript
+const KPAY_AUTH    = "1cc65d6c-4a0b-453d-b492-72ca5372a39f"; // api_key ejemplo Kueski
+const KPAY_SANDBOX = false;
+const KPAY_MIN     = 60;
+const KPAY_MAX     = 25000;
+```
+
+### Cambio para producción
+```javascript
+const KPAY_AUTH    = "f98c02ed-3906-4f00-8ca9-e744d0048131"; // nuestra api_key
+const KPAY_SANDBOX = true; // o false si Kueski indica producción
+```
+
+### Pendientes
+
+- **Respuesta de Brenda** sobre habilitación de api_key propia — error `Integrations with value 'API' is missing`. Correo enviado 2026-02-28.
+
+---
+
+## 15) Condicional min/max — Checkout (server-side)
+
+**Fecha:** 2026-02-27
+
+| Escenario | Total | Resultado |
+|---|---|---|
+| Dentro de rango | $1,000 | Kueski visible ✅ |
+| Por debajo del mínimo | $40 | Kueski oculto ✅ |
+| Por encima del máximo | $47,130 | Kueski oculto ✅ |
