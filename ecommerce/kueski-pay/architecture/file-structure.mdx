@@ -135,8 +135,10 @@ design/themes/responsive/templates/addons/kueski_pay/
     └── kueski_pay.tpl                 # Template frontend — confirmación de pago
 
 design/backend/templates/addons/kueski_pay/
-└── views/payments/components/cc_processors/
-    └── kueski_pay.tpl                 # Template backend — configuración processor
+├── views/payments/components/cc_processors/
+│   └── kueski_pay.tpl                 # Template backend — configuración processor
+└── views/orders/components/payments/
+    └── kueski_pay.tpl                 # Template backend — requerido para edición de pedidos en panel admin
 ```
 
 ---

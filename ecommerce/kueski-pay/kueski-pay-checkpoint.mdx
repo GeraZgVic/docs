@@ -7,6 +7,11 @@ Objetivo: Módulo de Reembolsos — Diseño + Documentación Mintlify + Fix webh
 ---
 
 ## Changelog
+### v1.15 (2026-03-03 — Fix edición de pedidos en panel admin)
+- Creado `design/backend/templates/addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl` — template backend requerido por CS-Cart al editar pedidos con método Kueski Pay.
+- Root cause: CS-Cart busca `processor_template` en rutas backend al cargar `order_management.update` — sin este archivo Smarty lanzaba `Not matching {capture}{/capture}` → HTTP 500.
+- Fix validado en staging y aplicado en DEV.
+
 ### v1.14 (2026-03-03 — Fixes auditoría refunds + claridad credenciales)
 - `func.php`: `amount` en auditoría ahora usa `$result['amount']` confirmado por Kueski como fuente de verdad — fallback a `$amount` local si Kueski no retorna el campo.
 - `func.php`: log `[KUESKI][REFUND] Amount mismatch` agregado cuando el monto local difiere del confirmado por Kueski.
