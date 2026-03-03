@@ -228,7 +228,7 @@ flowchart TD
 
   %% Hook y guards
   A --> H[Hook change_order_status_post\nfn_kueski_pay_change_order_status_post]
-  H --> G{Guards Refund\nold_status in P/C\npago approved\nno refund previo}
+  H --> G{Guards Refund\nold_status in P o C\npago approved\nno refund previo}
   G -- No pasa --> STOP[No procesa refund\nsolo logs y auditoria]
 
   %% Llamada a Kueski
@@ -236,7 +236,7 @@ flowchart TD
 
   %% Exito
   K1 -- OK --> K2[Auditoria en cscart_kueski_refunds\nstatus=completed + refund_id\nINSERT IGNORE]
-  K2 --> X[CS-Cart: X Reembolsado\nfn_change_order_status(order_id,'X')]
+  K2 --> X[CS-Cart: X Reembolsado\nfn_change_order_status order_id X]
 
   %% Error
   K1 -- FAIL --> ER1[Auditoria error en cscart_kueski_refunds\nON DUPLICATE KEY UPDATE\nerror_code/message/details]
