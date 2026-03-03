@@ -1,6 +1,9 @@
-# Kueski Pay Addon — Overview
+---
+title: "Kueski Pay"
+description: "Integración de Kueski Pay como método de pago en CS-Cart 4.19.x — flujo completo, webhook, reembolsos y certificación."
+---
 
-**Versión:** 1.11 — **Fecha:** 2026-03-02  
+**Versión:** 1.13 — **Fecha:** 2026-03-03  
 **Responsables:** Víctor / Carlos  
 **Plataforma:** CS-Cart 4.19.1.SP2  
 **Entorno activo:** DEV — `https://dev.importacionesamexico.com.mx`
@@ -12,7 +15,7 @@
 Integrar Kueski Pay como método de pago en CS-Cart, permitiendo a los clientes 
 financiar sus compras directamente desde el checkout. La integración cubre el 
 flujo completo: creación de pago, redirección al widget de Kueski, notificación 
-vía webhook y actualización automática del estado de la orden.
+vía webhook, actualización automática del estado de la orden y reembolsos totales.
 
 ---
 
@@ -43,8 +46,8 @@ vía webhook y actualización automática del estado de la orden.
 | Widget PDP | Frontend completo | ✅ Implementado |
 | Widget PDP (api_key) | Habilitación api_key propia | ⏳ Pendiente Brenda |
 | Condicional min/max | Ocultar Kueski Pay fuera de límites ($60–$25,000 MXN) | ✅ Implementado |
+| Reembolsos | Módulo completo — validado en staging | ✅ Implementado |
 | Certificación formal | 3 pruebas (Success, Denied, Cancelled) | ⏳ En espera Brenda |
-| Reembolsos | Módulo completo | ⏳ Post-certificación |
 | Logs sensibles PROD | Apagar en producción | ⏳ Post-certificación |
 | Rollback plan | — | ⏳ Post-certificación |
 
@@ -65,6 +68,10 @@ Kueski → POST webhook → kueski.php
 Guard + Idempotencia + fn_change_order_status()
         ↓
 Orden actualizada en CS-Cart
+        ↓
+Admin solicita reembolso (estado R)
+        ↓
+Hook → KueskiApi::refund() → Orden → X (Reembolsado)
 ```
 
 ---
@@ -75,7 +82,7 @@ Orden actualizada en CS-Cart
 | :--- | :--- | :--- |
 | Create Payment | `Authorization: Bearer {public_key}` | API Public Key |
 | Webhook response | `Authorization: Bearer {JWT HS256}` | Firmado con `api_secret` |
-| Refunds (próximo) | `Authorization: Bearer {JWT HS256}` | Firmado con `api_secret` |
+| Refunds | `Authorization: Bearer {JWT HS256}` | Firmado con `api_secret` |
 
 ---
 
@@ -92,7 +99,7 @@ Orden actualizada en CS-Cart
 | Shipping Object | Opcional | ⚠️ Pendiente post-cert |
 | Billing Object | Opcional | ⚠️ Pendiente post-cert |
 | IPN / Webhook | Recepción + respuesta JWT HS256 | ✅ |
-| Refunds | `POST /api/refunds` | ⏳ En diseño |
+| Refunds | `POST /api/refunds` | ✅ Implementado y validado staging |
 | Validate API Keys | `GET /v1/validate-keys` | ⏳ Post-cert |
 | Widget PDP | Frontend ✅ / api_key pendiente Brenda | ⚠️ Parcial |
 | Widget Checkout | No requerido (confirmado Brenda) | ✅ Descartado |
@@ -114,4 +121,3 @@ Orden actualizada en CS-Cart
 | Rol | Nombre | Contexto |
 | :--- | :--- | :--- |
 | Certificación | Brenda | Ejecuta las 3 pruebas desde el simulador |
-

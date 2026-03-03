@@ -1,0 +1,164 @@
+---
+title: "Refunds API"
+description: "Implementación técnica de KueskiApi::refund() — autenticación, request, respuesta y manejo de errores."
+---
+
+## Descripción general
+
+`KueskiApi::refund()` es el método que ejecuta la llamada HTTP a Kueski para procesar
+un reembolso total. Es invocado desde el hook `fn_kueski_pay_change_order_status_post`
+en `func.php` cuando el administrador cambia el estado de una orden a `R`.
+
+| Parámetro | Valor |
+| :--- | :--- |
+| **Archivo** | `Tygh/Addons/KueskiPay/Services/KueskiApi.php` |
+| **Método** | `refund(string $payment_id, string $api_secret)` |
+| **Invocado desde** | `func.php` — hook `fn_kueski_pay_change_order_status_post` |
+
+---
+
+## Autenticación
+
+Los reembolsos usan **JWT HS256** firmado con `api_secret` — el mismo mecanismo
+que el webhook response, generado via `JwtService.php`.
+
+| Campo JWT | Valor |
+| :--- | :--- |
+| `public_key` | API Public Key del merchant |
+| `iat` | Timestamp actual en segundos |
+| `exp` | `iat + 300s` |
+| `jti` | `SHA256(api_secret:iat)` |
+| **Header** | `Authorization: Bearer {JWT}` |
+
+> [!NOTE]
+> Esta autenticación es distinta a la de Create Payment, que usa Bearer Token
+> directo con `public_key`. Para refunds siempre se requiere JWT firmado.
+
+---
+
+## Request
+
+| Parámetro | Valor |
+| :--- | :--- |
+| **Método** | POST |
+| **Endpoint Sandbox** | `https://payments-api.sandbox-pay.kueski.codes/api/refunds` |
+| **Endpoint Testing** | `https://testing.kueskipay.com/api/refunds` |
+| **Endpoint Production** | `https://api.kueskipay.com/api/refunds` |
+
+### Headers
+
+| Header | Valor |
+| :--- | :--- |
+| `Authorization` | `Bearer {JWT}` |
+| `Content-Type` | `application/json` |
+
+### Body
+```json
+{
+    "payment_id": "959240262593418",
+    "reason": "merchant_refund"
+}
+```
+
+| Campo | Tipo | Requerido | Descripción |
+| :--- | :--- | :--- | :--- |
+| `payment_id` | string | Sí | ID de pago de Kueski a reembolsar |
+| `amount` | decimal | No | Monto a reembolsar — si se omite, reembolso total |
+| `reason` | string | No | Hardcodeado como `merchant_refund` en v1 |
+
+> [!NOTE]
+> En v1 el campo `amount` siempre se omite — el addon procesa únicamente
+> reembolsos totales.
+
+---
+
+## Respuesta exitosa (HTTP 201)
+```json
+{
+    "status": "success",
+    "data": {
+        "refund_id": "959240690412428",
+        "status": "completed",
+        "amount": 15498.93
+    }
+}
+```
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `data.refund_id` | string | ID único del reembolso en Kueski — se persiste en `cscart_kueski_refunds` |
+| `data.status` | string | `completed` o `processing` |
+| `data.amount` | decimal | Monto reembolsado confirmado por Kueski — fuente de verdad para auditoría |
+
+> [!NOTE]
+> `data.amount` es la fuente de verdad — es el valor que se guarda en
+> `cscart_kueski_refunds.amount`, no el calculado localmente. Si existe
+> discrepancia, se registra un log `[KUESKI][REFUND] Amount mismatch`.
+
+---
+
+## Manejo de errores
+
+Cualquier respuesta HTTP distinta de `201` lanza una `KueskiRefundException`
+que transporta metadata estructurada hasta el hook.
+
+| Método | Descripción |
+| :--- | :--- |
+| `getHttpStatus()` | HTTP status de Kueski — **única fuente válida** |
+| `getErrorCode()` | Código de error (`invalid-refund`, `payment-not-found`, etc.) |
+| `getErrorMessage()` | Mensaje descriptivo del error |
+| `getErrorDetails()` | Array del objeto `errors` de Kueski |
+| `getErrorDetailsJson()` | Serializado para guardar en `error_details` de BD |
+
+> [!WARNING]
+> `getCode()` heredado de `\Exception` retorna siempre `0`.
+> Usar `getHttpStatus()` exclusivamente para obtener el HTTP status.
+
+### Códigos de error frecuentes
+
+| HTTP Status | Código | Descripción |
+| :--- | :--- | :--- |
+| 400 | `payment-not-found` | `payment_id` no existe en Kueski |
+| 400 | `invalid-refund` | Reembolso fuera de límites (100 días, año fiscal, ya procesado) |
+| 400 | `invalid-request` | Parámetros inválidos |
+| 401 | — | JWT inválido o `api_secret` incorrecto |
+
+---
+
+## Estrategia de reintentos
+
+El addon diferencia el comportamiento de auditoría según el resultado:
+
+| Resultado | Estrategia DB | Motivo |
+| :--- | :--- | :--- |
+| **Éxito (HTTP 201)** | `INSERT IGNORE` | Un reembolso exitoso nunca se sobreescribe |
+| **Error** | `ON DUPLICATE KEY UPDATE` | Permite reintentar tras fallos temporales (timeout, Kueski caído) |
+
+> [!WARNING]
+> El reintento manual requiere que el admin vuelva a cambiar el estado
+> de la orden a `R`. El addon no reintenta automáticamente — los reembolsos
+> son operaciones financieras sensibles.
+
+---
+
+## Logs
+
+Todos los eventos del módulo de reembolsos se registran con el prefijo
+`[KUESKI][REFUND]` para facilitar el filtrado:
+```
+[KUESKI][REFUND] Refund requested. order_id=270 status_from=P
+[KUESKI][REFUND] Calling Kueski API. order_id=270 payment_id=959240262593418 amount=15498.93 mode=sandbox
+[KUESKI][REFUND] Success. order_id=270 payment_id=959240262593418 refund_id=959240690412428 amount=15498.93
+```
+
+---
+
+## Pruebas validadas
+
+| Escenario | Resultado |
+| :--- | :--- |
+| Reembolso total exitoso — Sandbox (2026-03-02) | ✅ HTTP 201, `refund_id` recibido |
+| Flujo E2E completo — Staging (2026-03-03) | ✅ orden 270 → X, auditoría en BD |
+| Rollback de orden si API falla | ✅ orden revertida a `old_status` |
+| Reintento tras fallo (`ON DUPLICATE KEY UPDATE`) | ✅ registro actualizado |
+| Mismatch de monto loggeado | ✅ `[KUESKI][REFUND] Amount mismatch` |

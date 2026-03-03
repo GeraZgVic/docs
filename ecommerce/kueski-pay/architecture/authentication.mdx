@@ -1,0 +1,127 @@
+---
+title: "Autenticación"
+description: "Mecanismos de autenticación del addon Kueski Pay — Bearer Token y JWT HS256."
+---
+
+## Descripción general
+
+El addon usa dos mecanismos de autenticación distintos dependiendo de la operación.
+Es importante no confundirlos — usar el mecanismo incorrecto resultará en HTTP 400/401.
+
+| Operación | Mecanismo | Credencial |
+| :--- | :--- | :--- |
+| Create Payment | Bearer Token | `public_key` |
+| Webhook response | JWT HS256 | `api_secret` |
+| Refunds | JWT HS256 | `api_secret` |
+
+---
+
+## Bearer Token — Create Payment
+
+Usado exclusivamente para crear pagos via `KueskiApi::createPayment()`.
+```http
+Authorization: Bearer {API_PUBLIC_KEY}
+```
+
+| Parámetro | Descripción |
+| :--- | :--- |
+| **Credencial** | `public_key` — API Public Key proporcionada por Kueski |
+| **Formato** | `Bearer {public_key}` directo — sin firma ni expiración |
+| **Leído desde** | `Registry::get('addons.kueski_pay.public_key')` |
+
+> [!NOTE]
+> Kueski denomina esta credencial `api_key` en su documentación oficial.
+> En este addon se nombra `public_key` para mayor claridad semántica —
+> es una clave pública que viaja en texto plano como Bearer Token.
+> No confundir con `api_secret`, que es la clave privada usada para firmar JWT.
+
+---
+
+## JWT HS256 — Webhook Response y Refunds
+
+Usado en la respuesta del webhook y en la llamada al endpoint de reembolsos.
+Generado por `JwtService::generateHs256()` en cada operación.
+```http
+Authorization: Bearer {JWT_TOKEN}
+```
+
+### Configuración JWT
+
+| Campo | Valor |
+| :--- | :--- |
+| **Algoritmo** | HS256 |
+| **Firmado con** | `api_secret` |
+| **`public_key`** | API Public Key del merchant |
+| **`iat`** | Timestamp actual en segundos |
+| **`exp`** | `iat + 300s` (5 minutos) |
+| **`jti`** | `SHA256(api_secret:iat)` |
+
+### Payload ejemplo
+```json
+{
+    "public_key": "f98c02ed-3906-4f00-8ca9-e744d0048131",
+    "iat": 1771882197,
+    "exp": 1771882497,
+    "jti": "sha256(api_secret:iat)"
+}
+```
+
+| Campo | Descripción |
+| :--- | :--- |
+| `public_key` | API Public Key del merchant |
+| `iat` | Issued At — timestamp de emisión |
+| `exp` | Expiration — `iat + 300s` |
+| `jti` | JWT ID — SHA256 de `api_secret:iat` — garantiza unicidad |
+
+> [!NOTE]
+> El JWT se genera en cada request — no se reutiliza ni se cachea.
+> Cada webhook response y cada refund generan un JWT independiente.
+
+---
+
+## Credenciales en CS-Cart
+
+Ambas credenciales se configuran desde el panel de administración en
+**Addons → Kueski Pay → Configuración** y se leen en runtime via:
+```php
+$public_key = Registry::get('addons.kueski_pay.public_key');
+$api_secret = Registry::get('addons.kueski_pay.api_secret');
+```
+
+| Setting | Tipo | Uso |
+| :--- | :--- | :--- |
+| `public_key` | input | Bearer Token en Create Payment |
+| `api_secret` | password | Firma JWT en webhook response y refunds |
+| `mode` | selectbox | Ambiente: `sandbox` / `testing` / `production` |
+
+> [!WARNING]
+> Nunca exponer `api_secret` en logs, responses o código client-side.
+> En los logs del addon, `Authorization` siempre aparece sanitizado:
+> `Bearer ****048131`.
+
+---
+
+## Errores de autenticación
+
+| Escenario | Comportamiento |
+| :--- | :--- |
+| `public_key` inválida en Create Payment | Kueski responde HTTP 400 `unauthorized` |
+| JWT inválido en webhook response | Kueski puede rechazar la respuesta |
+| JWT inválido en refunds | Kueski responde HTTP 401 |
+| Credenciales faltantes en webhook | Addon responde HTTP 500 + `exit` — no continúa ejecución |
+
+> [!WARNING]
+> Si `public_key` o `api_secret` no están configurados en el addon,
+> el webhook responde HTTP 500 inmediatamente y termina con `exit`.
+> Verificar credenciales en **Addons → Kueski Pay → Configuración**
+> antes de activar en producción.
+
+---
+
+## Separación semántica
+
+La separación entre `public_key` y `api_secret` es intencional y refleja
+el modelo de seguridad de Kueski:
+
+- **`public_key`** — identifica al merchant en operaciones de creación (outbound hacia Kueski)
+- **`api_secret`** — firma respuestas y operaciones sensibles (refunds) — nunca viaja en texto plano
