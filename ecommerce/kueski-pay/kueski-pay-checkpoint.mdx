@@ -7,6 +7,10 @@ Objetivo: Módulo de Reembolsos — Diseño + Documentación Mintlify + Fix webh
 ---
 
 ## Changelog
+### v1.14 (2026-03-03 — Fixes auditoría refunds + claridad credenciales)
+- `func.php`: `amount` en auditoría ahora usa `$result['amount']` confirmado por Kueski como fuente de verdad — fallback a `$amount` local si Kueski no retorna el campo.
+- `func.php`: log `[KUESKI][REFUND] Amount mismatch` agregado cuando el monto local difiere del confirmado por Kueski.
+- Documentado: `api_key` en guía oficial de Kueski = `public_key` en este addon — clave pública que viaja como Bearer Token, no confundir con `api_secret`.
 
 ### v1.13 (2026-03-03 — Fix moneda + Módulo Refunds completado)
 - `kueski_pay.php`: fix moneda — `total`, `price` y `tax` ahora se convierten de `CART_PRIMARY_CURRENCY` a MXN via `fn_format_price_by_currency` antes de enviar a Kueski.
