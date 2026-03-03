@@ -54,25 +54,85 @@ vía webhook, actualización automática del estado de la orden y reembolsos tot
 ---
 
 ## Flujo general
+```mermaid
+flowchart TD
+  %% ==========================
+  %% SECCIÓN 1: Checkout + Create Payment
+  %% ==========================
+  subgraph S1[Checkout → Create Payment → Redirect]
+    direction TD
+    A[Cliente: selecciona Kueski Pay en Checkout] --> B[CS-Cart ejecuta payments/kueski_pay.php]
+    B --> C[Create Payment API\nPOST /v1/payments\nPayload: order_id, amount, items\ncallbacks: success / reject / canceled / failed\nAuth: Bearer public_key]
+    C --> D[Respuesta Kueski:\npayment_id + callback_url]
+    D --> E[Persistir mapping\ncscart_kueski_payments\norder_id ↔ payment_id\nstatus=created]
+    E --> F[Redirect cliente → callback_url\n(UI Kueski)]
+  end
+
+  %% ==========================
+  %% SECCIÓN 2: Webhook + Idempotencia
+  %% ==========================
+  subgraph S2[Webhook (IPN) → Auditoría + Idempotencia]
+    direction TD
+    F --> G[Kueski → Webhook\nPOST dispatch=kueski.webhook\n{order_id,payment_id,status,...}]
+    G --> G0[Auditoría + Idempotencia (pre-guards)\nINSERT IGNORE en cscart_kueski_webhook_events\nDB-level idempotency\nUNIQUE(payment_id,status)\nDuplicado → responder idempotente, sin tocar orden]
+  end
+
+  %% ==========================
+  %% SECCIÓN 3: Guards (como nodos)
+  %% ==========================
+  subgraph S3[Guards del Webhook]
+    direction TD
+    G0 --> G1{Guard 1:\norder_id numérico > 0?}
+    G1 -- No --> R1[Responder sin tocar orden\napproved → reject\nterminal → ok]
+
+    G1 -- Sí --> G2{Guard 2:\n¿Orden existe en cscart_orders?}
+    G2 -- No --> R1
+
+    G2 -- Sí --> G3{Guard 3:\n¿Mapping válido en cscart_kueski_payments?\n(order_id ↔ payment_id)}
+    G3 -- No --> R1
+  end
+
+  %% ==========================
+  %% SECCIÓN 4: Status mapping → CS-Cart
+  %% ==========================
+  subgraph S4[Status mapping → Estados CS-Cart]
+    direction TD
+    G3 -- Sí --> S{status Kueski}
+
+    S -- approved --> O1[CS-Cart: P (Paid)\nfn_change_order_status(order_id,'P')]
+    S -- denied --> O2[CS-Cart: D (Declined)\nfn_change_order_status(order_id,'D')]
+    S -- canceled/cancelled --> O3[CS-Cart: I (Canceled)\nfn_change_order_status(order_id,'I')]
+
+    S -- otro --> O4[Status desconocido\nSolo auditoría\nSin cambio de orden]
+  end
+
+  %% ==========================
+  %% SECCIÓN 5: PAYMENT_NOTIFICATION (UX)
+  %% ==========================
+  subgraph S5[PAYMENT_NOTIFICATION (UX)]
+    direction TD
+    O1 --> PN[PAYMENT_NOTIFICATION\nreturn / cancel]
+    O2 --> PN
+    O3 --> PN
+
+    PN --> PN1[return:\nredirect checkout.complete?order_id=X\n+ limpia carrito]
+    PN --> PN2[cancel:\ncarrito intacto\n+ regresa a checkout]
+  end
+
+  %% O4 queda terminal (sin UX)
 ```
-Cliente selecciona Kueski Pay
-        ↓
-kueski_pay.php → POST /v1/payments → Kueski API
-        ↓
-Redirect → Widget Kueski (sandbox-ui / producción)
-        ↓
-Cliente autoriza / cancela / es rechazado
-        ↓
-Kueski → POST webhook → kueski.php
-        ↓
-Guard + Idempotencia + fn_change_order_status()
-        ↓
-Orden actualizada en CS-Cart
-        ↓
-Admin solicita reembolso (estado R)
-        ↓
-Hook → KueskiApi::refund() → Orden → X (Reembolsado)
-```
+
+<Note>
+
+Este diagrama describe el flujo completo de la integración:
+
+1. Creación del pago (`POST /v1/payments`)
+2. Redirección al widget de Kueski
+3. Recepción del webhook (IPN)
+4. Validación mediante guards e idempotencia DB-level
+5. Mapeo de estados hacia CS-Cart (`P`, `D`, `I`)
+
+</Note>
 
 ---
 
@@ -120,4 +180,4 @@ Hook → KueskiApi::refund() → Orden → X (Reembolsado)
 
 | Rol | Nombre | Contexto |
 | :--- | :--- | :--- |
-| Certificación | Brenda | Ejecuta las 3 pruebas desde el simulador |
+| Certificación | Brenda Aranza Garcia Solorio | Ejecuta las 3 pruebas desde el simulador |

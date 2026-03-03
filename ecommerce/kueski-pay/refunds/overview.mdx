@@ -223,25 +223,43 @@ CREATE TABLE IF NOT EXISTS `cscart_kueski_refunds` (
 ### 6.1 Diagrama de flujo
 ```mermaid
 flowchart TD
-    A([Admin cambia orden a R]) --> B{Guard:\nnew_status == R\nold_status IN P,C}
-    B -- ❌ No aplica --> Z([Salir sin acción])
-    B -- ✅ Pasa --> C{Mapping en\ncscart_kueski_payments\nstatus == approved?}
-    C -- ❌ No existe --> Z
-    C -- ✅ Existe --> D{Idempotencia:\n¿Ya existe refund\ncompleted/processing\npara este payment_id?}
-    D -- ✅ Ya existe --> Z
-    D -- ❌ No existe --> E[Llamar KueskiApi::refund\npayment_id + api_secret]
-    E --> F{HTTP 201?}
-    F -- ✅ Sí --> G[Guardar auditoría\nstatus = completed]
-    G --> H[Cambiar orden\nR → X automático]
-    H --> I([✅ Éxito — mostrar confirmación])
-    F -- ❌ No --> J[Guardar auditoría\nerror_code + error_message\n+ error_details + status = failed]
-    J --> K[Revertir orden\na old_status P o C]
-    K --> L([❌ Error — mostrar mensaje explicativo])
+  %% ==========================
+  %% SECCIÓN 1: Trigger admin
+  %% ==========================
+  subgraph R1[Admin → Estado R]
+    direction TD
+    A[Admin cambia estado de orden → R\n(Reembolso solicitado)]
+  end
 
-    style A fill:#4a90d9,color:#fff
-    style I fill:#27ae60,color:#fff
-    style L fill:#e74c3c,color:#fff
-    style Z fill:#95a5a6,color:#fff
+  %% ==========================
+  %% SECCIÓN 2: Hook + Guards
+  %% ==========================
+  subgraph R2[Hook → Guards Refund]
+    direction TD
+    A --> H[Hook: change_order_status_post\nfn_kueski_pay_change_order_status_post]
+    H --> G{Guards Refund}
+    G -->|NO PASA| STOP[No procesa refund\n(solo logs/auditoría)]
+  end
+
+  %% ==========================
+  %% SECCIÓN 3: Llamada a Kueski
+  %% ==========================
+  subgraph R3[KueskiApi::refund()]
+    direction TD
+    G -->|PASA| K1[POST /api/refunds\nAuth: JWT HS256 (api_secret)]
+  end
+
+  %% ==========================
+  %% SECCIÓN 4: Resultado (X / rollback)
+  %% ==========================
+  subgraph R4[Resultado → X o rollback]
+    direction TD
+    K1 -->|OK| OK1[Auditoría en cscart_kueski_refunds\nstatus=completed + refund_id\n(INSERT IGNORE)]
+    OK1 --> X[CS-Cart: X (Reembolsado)\nfn_change_order_status(order_id,'X')]
+
+    K1 -->|FAIL| ER1[Auditoría error en cscart_kueski_refunds\n(ON DUPLICATE KEY UPDATE)\nerror_code/message/details]
+    ER1 --> RB[Rollback orden → old_status\n(P o C)]
+  end
 ```
 
 ---
