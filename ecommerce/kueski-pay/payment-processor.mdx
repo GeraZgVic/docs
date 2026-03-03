@@ -147,7 +147,10 @@ El processor persiste el resultado de cada `createPayment()` en
 > )
 > WHERE payment_id = {your_payment_id};
 > ```
-
+> [!WARNING]
+> En reinstalaciones futuras este problema puede repetirse. El fix definitivo
+> es formalizar la vinculación de `processor_id` directamente en
+> `fn_kueski_pay_install()` en `func.php` — pendiente post-certificación.
 ---
 
 ## Pruebas validadas
