@@ -56,65 +56,48 @@ vía webhook, actualización automática del estado de la orden y reembolsos tot
 ## Flujo general
 ```mermaid
 flowchart TD
-  %% ==========================
-  %% SECCIÓN 1: Checkout + Create Payment
-  %% ==========================
-  subgraph S1[Checkout → Create Payment → Redirect]
+  subgraph S1[Checkout -> Create Payment -> Redirect]
     A[Cliente: selecciona Kueski Pay en Checkout] --> B[CS-Cart ejecuta payments/kueski_pay.php]
     B --> C[Create Payment API\nPOST /v1/payments\nPayload: order_id, amount, items\ncallbacks: success / reject / canceled / failed\nAuth: Bearer public_key]
     C --> D[Respuesta Kueski:\npayment_id + callback_url]
-    D --> E[Persistir mapping\ncscart_kueski_payments\norder_id ↔ payment_id\nstatus=created]
-    E --> F[Redirect cliente → callback_url\n(UI Kueski)]
+    D --> E[Persistir mapping\ncscart_kueski_payments\norder_id <-> payment_id\nstatus=created]
+    E --> F[Redirect cliente a callback_url\nUI Kueski]
   end
 
-  %% ==========================
-  %% SECCIÓN 2: Webhook + Idempotencia
-  %% ==========================
-  subgraph S2[Webhook (IPN) → Auditoría + Idempotencia]
-    F --> G[Kueski → Webhook\nPOST dispatch=kueski.webhook\n{order_id,payment_id,status,...}]
-    G --> G0[Auditoría + Idempotencia (pre-guards)\nINSERT IGNORE en cscart_kueski_webhook_events\nDB-level idempotency\nUNIQUE(payment_id,status)\nDuplicado → responder idempotente, sin tocar orden]
+  subgraph S2[Webhook (IPN) -> Auditoria + Idempotencia]
+    F --> G[Kueski -> Webhook\nPOST dispatch=kueski.webhook\n{order_id,payment_id,status,...}]
+    G --> G0[Auditoria + Idempotencia pre-guards\nINSERT IGNORE en cscart_kueski_webhook_events\nDB-level idempotency\nUNIQUE(payment_id,status)\nDuplicado: responder idempotente, sin tocar orden]
   end
 
-  %% ==========================
-  %% SECCIÓN 3: Guards (como nodos)
-  %% ==========================
   subgraph S3[Guards del Webhook]
-    G0 --> G1{Guard 1:\norder_id numérico > 0?}
-    G1 -- No --> R1[Responder sin tocar orden\napproved → reject\nterminal → ok]
+    G0 --> G1{Guard 1:\norder_id numerico > 0?}
+    G1 -- No --> R1[Responder sin tocar orden\napproved: reject\nterminal: ok]
 
-    G1 -- Sí --> G2{Guard 2:\n¿Orden existe en cscart_orders?}
+    G1 -- Si --> G2{Guard 2:\nOrden existe en cscart_orders?}
     G2 -- No --> R1
 
-    G2 -- Sí --> G3{Guard 3:\n¿Mapping válido en cscart_kueski_payments?\n(order_id ↔ payment_id)}
+    G2 -- Si --> G3{Guard 3:\nMapping valido en cscart_kueski_payments?\norder_id <-> payment_id}
     G3 -- No --> R1
   end
 
-  %% ==========================
-  %% SECCIÓN 4: Status mapping → CS-Cart
-  %% ==========================
-  subgraph S4[Status mapping → Estados CS-Cart]
-    G3 -- Sí --> S{status Kueski}
+  subgraph S4[Status mapping -> Estados CS-Cart]
+    G3 -- Si --> S{status Kueski}
 
     S -- approved --> O1[CS-Cart: P (Paid)\nfn_change_order_status(order_id,'P')]
     S -- denied --> O2[CS-Cart: D (Declined)\nfn_change_order_status(order_id,'D')]
     S -- canceled/cancelled --> O3[CS-Cart: I (Canceled)\nfn_change_order_status(order_id,'I')]
 
-    S -- otro --> O4[Status desconocido\nSolo auditoría\nSin cambio de orden]
+    S -- otro --> O4[Status desconocido\nSolo auditoria\nSin cambio de orden]
   end
 
-  %% ==========================
-  %% SECCIÓN 5: PAYMENT_NOTIFICATION (UX)
-  %% ==========================
   subgraph S5[PAYMENT_NOTIFICATION (UX)]
     O1 --> PN[PAYMENT_NOTIFICATION\nreturn / cancel]
     O2 --> PN
     O3 --> PN
 
-    PN --> PN1[return:\nredirect checkout.complete?order_id=X\n+ limpia carrito]
-    PN --> PN2[cancel:\ncarrito intacto\n+ regresa a checkout]
+    PN --> PN1[return:\nredirect checkout.complete?order_id=X\nlimpia carrito]
+    PN --> PN2[cancel:\ncarrito intacto\nregresa a checkout]
   end
-
-  %% O4 queda terminal (sin UX)
 ```
 
 <Note>
