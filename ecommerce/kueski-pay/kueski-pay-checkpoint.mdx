@@ -1,12 +1,21 @@
-Fecha: 2026-03-02
-Versión: **v1.12**
-Entorno: **DEV** (https://dev.importacionesamexico.com.mx/)
+Fecha: 2026-03-03
+Versión: **v1.13**
+Entorno: / **Staging** (https://staging.importacionesamexico.com.mx/)
 Responsables: **Victor / Carlos**
 Objetivo: Módulo de Reembolsos — Diseño + Documentación Mintlify + Fix webhook denied→Declined.
 
 ---
 
 ## Changelog
+
+### v1.13 (2026-03-03 — Fix moneda + Refunds en progreso)
+- `kueski_pay.php`: fix moneda — `total`, `price` y `tax` ahora se convierten de `CART_PRIMARY_CURRENCY` a MXN via `fn_format_price_by_currency` antes de enviar a Kueski.
+- Root cause: staging/prod tienen USD como moneda primaria; `$order_info['total']` retornaba USD.
+- Validado en staging: orden 269, $7,598.93 MXN — payload y Kueski sandbox confirman valor correcto ✅
+- Nota para DEV: conversión MXN→MXN (factor 1.0) — transparente, sin efecto funcional.
+- `KueskiApi::refund()` implementado — reutiliza `request()`, JWT via `JwtService`, captura `\Exception` → `KueskiRefundException`.
+- `func.php` install: tabla `cscart_kueski_refunds` + estados R y X agregados y validados en staging ✅
+- `func.php` uninstall: cleanup estados R y X + drop tabla ✅
 
 ### v1.12 (2026-03-02 — Módulo Refunds + Documentación Mintlify)
 - `KueskiRefundException.php` creado y cerrado.
@@ -766,6 +775,12 @@ Después de agregar `fn_change_order_status()`, el webhook tarda algunos miliseg
 | Logs sensibles en PROD | ⏳ Post-cert |
 | Rollback plan | ⏳ Post-cert |
 | Documentación Mintlify | ✅ Iniciada (v1.12) |
+| Fix moneda `fn_format_price_by_currency` | ✅ Implementado y validado staging (v1.13) |
+| `KueskiApi::refund()` | ✅ Implementado (v1.13) |
+| `cscart_kueski_refunds` tabla | ✅ Install/uninstall validado staging (v1.13) |
+| Estados R y X | ✅ Validados en staging (v1.13) |
+| Refunds — `init.php` + hook | ⏳ Pendiente |
+| Refunds — pruebas E2E staging | ⏳ Pendiente |
 
 ---
 
@@ -785,7 +800,7 @@ Después de agregar `fn_change_order_status()`, el webhook tarda algunos miliseg
 | — Guards | `order_id` numérico, orden existe, mapping válido | ✅ |
 | — Idempotencia | `INSERT IGNORE` + `UNIQUE KEY (payment_id, status)` | ✅ |
 | — Race condition | 20 concurrentes validados | ✅ |
-| **3. Refunds** | `POST /api/refunds` | ⏳ En implementación |
+| **3. Refunds** | `POST /api/refunds` | ⏳ En progreso (v1.13) |
 | **4. Validate API Keys** | `GET /v1/validate-keys` | ⏳ Post-cert |
 | **Widgets** | PDP — frontend ✅ / api_key pendiente habilitación por Kueski | ⚠️ Parcial |
 | **Widgets** | Checkout — no requerido (confirmado por Brenda) | ✅ Descartado |
