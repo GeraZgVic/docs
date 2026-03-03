@@ -11,7 +11,7 @@ description: "Módulo de reembolsos totales integrado con la API de Kueski Pay d
 
 <Note>
   Este documento es parte de la documentación técnica del addon Kueski Pay.  
-  Para el historial completo de cambios ver [Checkpoint Técnico](/kueski-pay-checkpoint).
+  Para el historial completo de cambios ver [Checkpoint Técnico](/ecommerce/kueski-pay//kueski-pay-checkpoint).
 </Note>
 
 ## 1. Contexto
@@ -152,9 +152,9 @@ Se usa `KueskiRefundException` (en lugar de `RuntimeException`) para transportar
 | Archivo | Acción | Estado |
 | :--- | :--- | :--- |
 | `KueskiRefundException.php` | Crear | ✅ Completado |
-| `KueskiApi.php` | Modificar — agregar `refund()` — ✅ Completado — [v1.13](/kueski-pay-checkpoint) |
-| `func.php` | Modificar — hook + install/uninstall — ✅ Completado — [v1.13](/kueski-pay-checkpoint) |
-| `init.php` | Modificar — registrar hook — ✅ Completado — [v1.13](/kueski-pay-checkpoint) |
+| `KueskiApi.php` | Modificar — agregar `refund()` — ✅ Completado — [v1.13](/ecommerce/kueski-pay//kueski-pay-checkpoint) |
+| `func.php` | Modificar — hook + install/uninstall — ✅ Completado — [v1.13](/ecommerce/kueski-pay//kueski-pay-checkpoint) |
+| `init.php` | Modificar — registrar hook — ✅ Completado — [v1.13](/ecommerce/kueski-pay//kueski-pay-checkpoint) |
 
 ### 5.2 Tabla `cscart_kueski_refunds` ✅ Cerrada
 ```sql
