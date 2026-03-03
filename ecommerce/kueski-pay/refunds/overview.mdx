@@ -6,8 +6,13 @@ description: "Módulo de reembolsos totales integrado con la API de Kueski Pay d
 <Info>
   **Versión:** 2.1 — **Fecha:** 2026-03-02  
   **Responsables:** Víctor / Carlos  
-  **Estado:** Diseño Final — Bloqueado por certificación
+  **Estado:** ✅ Implementado y validado en Staging
 </Info>
+
+<Note>
+  Este documento es parte de la documentación técnica del addon Kueski Pay.  
+  Para el historial completo de cambios ver [Checkpoint Técnico](/kueski-pay-checkpoint).
+</Note>
 
 ## 1. Contexto
 
@@ -146,10 +151,10 @@ Se usa `KueskiRefundException` (en lugar de `RuntimeException`) para transportar
 
 | Archivo | Acción | Estado |
 | :--- | :--- | :--- |
-| `KueskiRefundException.php` | Crear | ✅ Cerrado |
-| `KueskiApi.php` | Modificar — agregar `refund()` | ⏳ Pendiente Brenda |
-| `func.php` | Modificar — hook + install/uninstall | ⏳ Pendiente |
-| `init.php` | Modificar — registrar hook | ⏳ Pendiente |
+| `KueskiRefundException.php` | Crear | ✅ Completado |
+| `KueskiApi.php` | Modificar — agregar `refund()` — ✅ Completado — [v1.13](/kueski-pay-checkpoint) |
+| `func.php` | Modificar — hook + install/uninstall — ✅ Completado — [v1.13](/kueski-pay-checkpoint) |
+| `init.php` | Modificar — registrar hook — ✅ Completado — [v1.13](/kueski-pay-checkpoint) |
 
 ### 5.2 Tabla `cscart_kueski_refunds` ✅ Cerrada
 ```sql
@@ -274,8 +279,8 @@ flowchart TD
 | :--- | :--- |
 | Confirmar URL sandbox endpoint refunds | ✅ Validado empíricamente (2026-03-02) |
 | Validar `JwtService.php` para refunds | ✅ Validado, sin cambios |
-| Certificación con Brenda | ⏳ En espera — prerrequisito para modificar `KueskiApi.php` y archivos existentes |
-
+| Certificación con Brenda | ⏳ En espera |
+| Implementación completa | ✅ Completado en staging (2026-03-03) |
 ---
 
 ## 9. Estimación
@@ -283,18 +288,19 @@ flowchart TD
 | Tarea | Estimación | Estado |
 | :--- | :--- | :--- |
 | `KueskiRefundException.php` | — | ✅ Completado |
-| Tabla `cscart_kueski_refunds` | 1 hora | ✅ Diseño cerrado |
-| `KueskiApi::refund()` + JWT | 2-3 horas | ⏳ Pendiente Brenda |
-| Hook `fn_change_order_status_post` | 3-4 horas | ⏳ Pendiente |
-| Install/Uninstall estados R y X | 1 hora | ⏳ Pendiente |
-| Pruebas en Sandbox + evidencia | 3-4 horas | ⏳ Pendiente |
-| **Total restante** | **~1.5 días** | |
+| Tabla `cscart_kueski_refunds` | 1 hora | ✅ Completado |
+| `KueskiApi::refund()` + JWT | 2-3 horas | ✅ Completado (v1.13) |
+| Hook `fn_change_order_status_post` | 3-4 horas | ✅ Completado (v1.13) |
+| Install/Uninstall estados R y X | 1 hora | ✅ Completado (v1.13) |
+| Pruebas en Staging + evidencia | 3-4 horas | ✅ Completado (v1.13) |
+| Pruebas en DEV post-certificación | 1-2 horas | ⏳ Pendiente |
+| **Total restante** | **~1-2 horas** | |
 
 ---
 
 ## 10. Validación empírica — Sandbox Refund
 
-**Fecha:** 2026-03-02
+### 10.1 Validación API directa (2026-03-02)
 
 | Campo | Valor |
 | :--- | :--- |
@@ -304,6 +310,26 @@ flowchart TD
 | **refund_id** | `958866366868266` |
 | **status** | `completed` |
 | **amount** | `7629.00 MXN` |
+
+**Conclusiones:**
+- URL sandbox confirmada: `https://payments-api.sandbox-pay.kueski.codes/api/refunds` ✅
+- Autenticación JWT (HS256 con `api_secret`) funciona igual que webhook ✅
+- Respuesta síncrona HTTP 201 confirmada ✅
+- Sin campo `amount` en body → reembolso total confirmado ✅
+- `data.status = completed` — sandbox no deja refunds en estado `processing` ✅
+
+### 10.2 Validación E2E — Staging (2026-03-03)
+
+| Campo | Valor |
+| :--- | :--- |
+| **order_id** | `270` |
+| **payment_id** | `959240262593418` |
+| **refund_id** | `959240690412428` |
+| **status** | `completed` ✅ |
+| **amount** | `15498.93 MXN` ✅ |
+| **Orden → X** | ✅ |
+| **Rollback orden fallida** | ✅ Validado |
+| **Reintento tras fallo** | ✅ Validado (`ON DUPLICATE KEY UPDATE`) |
 
 **Conclusiones:**
 
