@@ -1,6 +1,6 @@
 Fecha: 2026-03-03
 Versión: **v1.13**
-Entorno: / **Staging** (https://staging.importacionesamexico.com.mx/)
+Entorno: **DEV** (https://dev.importacionesamexico.com.mx/) / **Staging** (https://staging.importacionesamexico.com.mx/)
 Responsables: **Victor / Carlos**
 Objetivo: Módulo de Reembolsos — Diseño + Documentación Mintlify + Fix webhook denied→Declined.
 
@@ -8,7 +8,7 @@ Objetivo: Módulo de Reembolsos — Diseño + Documentación Mintlify + Fix webh
 
 ## Changelog
 
-### v1.13 (2026-03-03 — Fix moneda + Refunds en progreso)
+### v1.13 (2026-03-03 — Fix moneda + Módulo Refunds completado)
 - `kueski_pay.php`: fix moneda — `total`, `price` y `tax` ahora se convierten de `CART_PRIMARY_CURRENCY` a MXN via `fn_format_price_by_currency` antes de enviar a Kueski.
 - Root cause: staging/prod tienen USD como moneda primaria; `$order_info['total']` retornaba USD.
 - Validado en staging: orden 269, $7,598.93 MXN — payload y Kueski sandbox confirman valor correcto ✅
@@ -16,6 +16,11 @@ Objetivo: Módulo de Reembolsos — Diseño + Documentación Mintlify + Fix webh
 - `KueskiApi::refund()` implementado — reutiliza `request()`, JWT via `JwtService`, captura `\Exception` → `KueskiRefundException`.
 - `func.php` install: tabla `cscart_kueski_refunds` + estados R y X agregados y validados en staging ✅
 - `func.php` uninstall: cleanup estados R y X + drop tabla ✅
+- `init.php`: hook `change_order_status_post` registrado.
+- `func.php`: hook `fn_kueski_pay_change_order_status_post` implementado con guards, auditoría, rollback y logs `[KUESKI][REFUND]`.
+- `KueskiApi::refund()`: fix `http_status` — parseado desde mensaje via `preg_match('/HTTP (\d{3}/')`.
+- `cscart_kueski_refunds`: `INSERT IGNORE` en éxito, `ON DUPLICATE KEY UPDATE` en error (permite reintentos).
+- Flujo E2E validado en staging: orden 270, refund_id `959240690412428`, orden → `X` ✅
 
 ### v1.12 (2026-03-02 — Módulo Refunds + Documentación Mintlify)
 - `KueskiRefundException.php` creado y cerrado.
@@ -425,6 +430,8 @@ CS-Cart en DEV: **4.19.1.SP2**. Se ajustó `addon.xml` para no bloquear instalac
 - Crea `cscart_kueski_webhook_events`
 - Crea `cscart_kueski_payments`
 - Registra processor en `cscart_payment_processors` (con guard `IF NOT EXISTS`)
+- Crea `cscart_kueski_refunds`
+- Registra estados R (Reembolso solicitado) y X (Reembolsado)
 
 **Uninstall:**
 - Deshabilita métodos de pago que usaban el processor (evita checkout roto)
@@ -495,7 +502,7 @@ Esta separación cumple con el modelo de autenticación definido por Kueski:
 - `UNIQUE KEY uk_payment_id (payment_id)`
 - `KEY idx_status (status)`
 
-### 7.3 Tabla `cscart_kueski_refunds` ⏳ Diseño cerrado — pendiente implementación
+### 7.3 Tabla `cscart_kueski_refunds` ✅ Implementada y validada en staging (v1.13)
 ```sql
 CREATE TABLE IF NOT EXISTS `cscart_kueski_refunds` (
     `id`            INT UNSIGNED    NOT NULL AUTO_INCREMENT,
@@ -728,7 +735,7 @@ Después de agregar `fn_change_order_status()`, el webhook tarda algunos miliseg
 3. ~~**Condicional min/max amount en checkout**~~ — ✅ Completado en v1.10.
 4. ~~**Pruebas de UX real en CS-Cart**~~ — ✅ Validado (v1.7).
 5. **Certificación formal** — ⏳ En espera de respuesta de Brenda.
-6. **Módulo de Reembolsos** — ⏳ Implementación pendiente post-certificación.
+6. ~~**Módulo de Reembolsos**~~ — ✅ Completado en staging (v1.13). Pendiente prueba en DEV post-certificación.
 
 ### 10.3 Post-certificación / hardening
 
@@ -779,8 +786,9 @@ Después de agregar `fn_change_order_status()`, el webhook tarda algunos miliseg
 | `KueskiApi::refund()` | ✅ Implementado (v1.13) |
 | `cscart_kueski_refunds` tabla | ✅ Install/uninstall validado staging (v1.13) |
 | Estados R y X | ✅ Validados en staging (v1.13) |
-| Refunds — `init.php` + hook | ⏳ Pendiente |
-| Refunds — pruebas E2E staging | ⏳ Pendiente |
+| Refunds — `init.php` + hook | ✅ Implementado y validado staging (v1.13) |
+| Refunds — pruebas E2E staging | ✅ Validado — orden 270, refund_id 959240690412428 (v1.13) |
+| Módulo Refunds completo | ✅ Completado en staging (v1.13) |
 
 ---
 
@@ -800,7 +808,7 @@ Después de agregar `fn_change_order_status()`, el webhook tarda algunos miliseg
 | — Guards | `order_id` numérico, orden existe, mapping válido | ✅ |
 | — Idempotencia | `INSERT IGNORE` + `UNIQUE KEY (payment_id, status)` | ✅ |
 | — Race condition | 20 concurrentes validados | ✅ |
-| **3. Refunds** | `POST /api/refunds` | ⏳ En progreso (v1.13) |
+| **3. Refunds** | `POST /api/refunds` | ✅ Implementado y validado staging (v1.13) |
 | **4. Validate API Keys** | `GET /v1/validate-keys` | ⏳ Post-cert |
 | **Widgets** | PDP — frontend ✅ / api_key pendiente habilitación por Kueski | ⚠️ Parcial |
 | **Widgets** | Checkout — no requerido (confirmado por Brenda) | ✅ Descartado |
@@ -849,3 +857,32 @@ const KPAY_SANDBOX = true; // o false si Kueski indica producción
 | Dentro de rango | $1,000 | Kueski visible ✅ |
 | Por debajo del mínimo | $40 | Kueski oculto ✅ |
 | Por encima del máximo | $47,130 | Kueski oculto ✅ |
+
+## 16) Módulo de Reembolsos — Staging
+
+**Fecha:** 2026-03-03
+
+### Flujo implementado
+```
+Admin cambia orden P/C → R → Hook → KueskiApi::refund() → X (éxito) / rollback a P/C (error)
+```
+
+### Guards
+1. `status_to` debe ser `R`
+2. `status_from` debe ser `P` o `C`
+3. Debe existir mapping con `status=approved` en `cscart_kueski_payments`
+4. No debe existir refund previo con `status=completed/processing`
+
+### Evidencia E2E staging
+
+order_id: 270 | payment_id: 959240262593418 | refund_id: 959240690412428
+
+| Campo | Valor |
+|---|---|
+| `status` | completed ✅ |
+| `amount` | 15498.93 MXN ✅ |
+| `old_status` | P ✅ |
+| Orden → X | ✅ |
+
+### Pendiente
+- Prueba en DEV con payment_id real post-certificación.
