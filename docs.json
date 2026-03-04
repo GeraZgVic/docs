@@ -65,6 +65,12 @@
                     ]
                   }
                 ]
+              },
+              {
+                "group": "Aplazo",
+                "pages": [
+                  "ecommerce/aplazo/api-reference"
+                ]
               }
             ]
           }
