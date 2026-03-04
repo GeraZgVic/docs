@@ -1,0 +1,261 @@
+---
+title: "Migración Staging → DEV — Módulo Refunds"
+description: "Instrucciones para pasar los archivos del módulo de reembolsos de Staging a DEV una vez que Brenda confirme la certificación."
+---
+
+<Warning>
+  Ejecutar **solo después** de recibir confirmación de Brenda.
+  DEV es el entorno de certificación — no modificar sin luz verde.
+</Warning>
+
+## Contexto
+
+El módulo de Refunds fue desarrollado y validado en Staging (`https://staging.importacionesamexico.com.mx/`).
+DEV (`https://dev.importacionesamexico.com.mx/`) está en v1.12/v1.13 y no tiene nada relacionado con refunds.
+
+Ambos entornos corren en el **mismo servidor físico**, en contenedores Docker distintos:
+
+| Entorno | Ruta base |
+| :--- | :--- |
+| **Staging** | `/root/platform/webs/test` |
+| **DEV** | `/root/platform/webs/development` |
+
+---
+
+## Archivos a migrar
+
+| Archivo | Acción |
+| :--- | :--- |
+| `app/addons/kueski_pay/init.php` | Sobreescribir — agrega hook `change_order_status_post` |
+| `app/addons/kueski_pay/func.php` | Sobreescribir — hook refunds + install/uninstall estados R/X + tabla `cscart_kueski_refunds` |
+| `app/addons/kueski_pay/payments/kueski_pay.php` | Sobreescribir — fix moneda USD→MXN via `fn_format_price_by_currency` |
+| `app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiApi.php` | Sobreescribir — método `refund()` + fix `http_status` + amount confirmado por Kueski |
+| `app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiRefundException.php` | **Archivo nuevo** — excepción especializada para refunds |
+| `design/themes/responsive/templates/addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl` | Sobreescribir — fix contenido template frontend |
+
+<Note>
+  `design/backend/templates/addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl`
+  **ya existe en DEV** — no se toca.
+</Note>
+
+---
+
+## Paso 1 — Verificar archivos fuente en Staging
+
+Confirmar que todos los archivos existen antes de copiar:
+
+```bash
+ls /root/platform/webs/test/app/addons/kueski_pay/init.php
+ls /root/platform/webs/test/app/addons/kueski_pay/func.php
+ls /root/platform/webs/test/app/addons/kueski_pay/payments/kueski_pay.php
+ls /root/platform/webs/test/app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiApi.php
+ls /root/platform/webs/test/app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiRefundException.php
+ls /root/platform/webs/test/design/themes/responsive/templates/addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl
+```
+
+Todos deben responder sin error. Si alguno falla, detener y revisar.
+
+---
+
+## Paso 2 — Backup de archivos actuales en DEV
+
+Antes de sobreescribir, respaldar el estado actual de DEV en una carpeta con timestamp:
+
+```bash
+BACKUP_DIR="/root/platform/backups/kueski_pay_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+
+cp /root/platform/webs/development/app/addons/kueski_pay/init.php "$BACKUP_DIR/init.php"
+cp /root/platform/webs/development/app/addons/kueski_pay/func.php "$BACKUP_DIR/func.php"
+cp /root/platform/webs/development/app/addons/kueski_pay/payments/kueski_pay.php "$BACKUP_DIR/kueski_pay.php"
+cp /root/platform/webs/development/app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiApi.php "$BACKUP_DIR/KueskiApi.php"
+cp /root/platform/webs/development/design/themes/responsive/templates/addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl "$BACKUP_DIR/kueski_pay.tpl"
+
+echo "Backup guardado en: $BACKUP_DIR"
+ls "$BACKUP_DIR"
+```
+
+<Note>
+  `KueskiRefundException.php` no se respalda porque no existe en DEV — es archivo nuevo.
+  En caso de necesitar revertir, copiar los archivos del `$BACKUP_DIR` de vuelta a sus rutas originales.
+</Note>
+
+---
+
+## Paso 3 — Copiar archivos Staging → DEV
+
+```bash
+cp /root/platform/webs/test/app/addons/kueski_pay/init.php \
+   /root/platform/webs/development/app/addons/kueski_pay/init.php
+
+cp /root/platform/webs/test/app/addons/kueski_pay/func.php \
+   /root/platform/webs/development/app/addons/kueski_pay/func.php
+
+cp /root/platform/webs/test/app/addons/kueski_pay/payments/kueski_pay.php \
+   /root/platform/webs/development/app/addons/kueski_pay/payments/kueski_pay.php
+
+cp /root/platform/webs/test/app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiApi.php \
+   /root/platform/webs/development/app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiApi.php
+
+cp /root/platform/webs/test/app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiRefundException.php \
+   /root/platform/webs/development/app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiRefundException.php
+
+cp /root/platform/webs/test/design/themes/responsive/templates/addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl \
+   /root/platform/webs/development/design/themes/responsive/templates/addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl
+```
+
+---
+
+## Paso 4 — Verificar integridad de los archivos copiados
+
+Los hashes `md5sum` deben ser **idénticos** entre Staging y DEV para cada par:
+
+```bash
+md5sum \
+  /root/platform/webs/test/app/addons/kueski_pay/init.php \
+  /root/platform/webs/development/app/addons/kueski_pay/init.php
+
+md5sum \
+  /root/platform/webs/test/app/addons/kueski_pay/func.php \
+  /root/platform/webs/development/app/addons/kueski_pay/func.php
+
+md5sum \
+  /root/platform/webs/test/app/addons/kueski_pay/payments/kueski_pay.php \
+  /root/platform/webs/development/app/addons/kueski_pay/payments/kueski_pay.php
+
+md5sum \
+  /root/platform/webs/test/app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiApi.php \
+  /root/platform/webs/development/app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiApi.php
+
+md5sum \
+  /root/platform/webs/test/app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiRefundException.php \
+  /root/platform/webs/development/app/addons/kueski_pay/Tygh/Addons/KueskiPay/Services/KueskiRefundException.php
+
+md5sum \
+  /root/platform/webs/test/design/themes/responsive/templates/addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl \
+  /root/platform/webs/development/design/themes/responsive/templates/addons/kueski_pay/views/orders/components/payments/kueski_pay.tpl
+```
+
+Si algún par de hashes no coincide, repetir el `cp` de ese archivo.
+
+---
+
+## Paso 5 — Activar tabla y estados en DEV
+
+`func.php` tiene cambios en install/uninstall: crea la tabla `cscart_kueski_refunds` y registra los estados `R` y `X`.
+
+<Tabs>
+  <Tab title="Opción A — Reinstalar el addon (recomendado)">
+    Desde el panel de administración de CS-Cart en DEV:
+
+    1. Ir a **Add-ons → Manage Add-ons**
+    2. Desinstalar **Kueski Pay**
+    3. Reinstalar **Kueski Pay**
+    4. Reconfigurar `public_key`, `api_secret` y `mode` en los settings del addon
+
+    <Warning>
+      El uninstall dropea las tablas `cscart_kueski_payments`, `cscart_kueski_webhook_events`
+      y `cscart_kueski_refunds`. Los registros históricos de DEV se perderán.
+      Evaluar si esto es aceptable antes de proceder.
+    </Warning>
+  </Tab>
+  <Tab title="Opción B — Ejecutar SQL manualmente">
+    Si no se quiere perder el historial de DEV, ejecutar solo el SQL nuevo dentro del contenedor:
+
+    ```bash
+    docker exec -it cscart-cscart_development_db-1 mysql -u root -p{PASSWORD} cscart_dev
+    ```
+
+    ```sql
+    -- Crear tabla de refunds
+    CREATE TABLE IF NOT EXISTS `cscart_kueski_refunds` (
+        `id`            INT UNSIGNED    NOT NULL AUTO_INCREMENT,
+        `order_id`      INT UNSIGNED    NOT NULL,
+        `payment_id`    VARCHAR(64)     NOT NULL,
+        `refund_id`     VARCHAR(64)     NULL,
+        `amount`        DECIMAL(12,2)   NOT NULL,
+        `reason`        VARCHAR(32)     NOT NULL DEFAULT 'merchant_refund',
+        `status`        VARCHAR(32)     NOT NULL,
+        `error_code`    VARCHAR(64)     NULL,
+        `error_message` TEXT,
+        `error_details` TEXT,
+        `old_status`    VARCHAR(8)      NOT NULL,
+        `created_at`    INT UNSIGNED    NOT NULL,
+        PRIMARY KEY (`id`),
+        UNIQUE KEY `uk_kueski_refunds_order`   (`order_id`),
+        UNIQUE KEY `uk_kueski_refunds_payment` (`payment_id`),
+        KEY        `idx_kueski_refunds_status` (`status`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+    -- Verificar si R y X ya existen antes de insertar
+    SELECT status, type FROM cscart_statuses WHERE status IN ('R', 'X') AND type = 'O';
+
+    -- Si el SELECT anterior devuelve filas, revisar las descripciones actuales:
+    SELECT status, lang_code, description
+    FROM cscart_status_descriptions
+    WHERE status IN ('R', 'X') AND type = 'O';
+
+    -- Registrar estado R — Reembolso solicitado
+    -- ON DUPLICATE KEY UPDATE garantiza que descripción y posición queden correctas
+    -- aunque R ya exista con valores distintos
+    INSERT INTO `cscart_statuses` (`status`, `type`, `is_default`, `position`)
+    VALUES ('R', 'O', 'N', 50)
+    ON DUPLICATE KEY UPDATE `position` = 50, `is_default` = 'N';
+
+    INSERT INTO `cscart_status_descriptions` (`status`, `type`, `lang_code`, `description`, `email_subj`, `email_header`, `instructions`)
+    VALUES
+      ('R', 'O', 'es', 'Reembolso solicitado', '', '', ''),
+      ('R', 'O', 'en', 'Refund requested',     '', '', '')
+    ON DUPLICATE KEY UPDATE `description` = VALUES(`description`);
+
+    -- Registrar estado X — Reembolsado
+    INSERT INTO `cscart_statuses` (`status`, `type`, `is_default`, `position`)
+    VALUES ('X', 'O', 'N', 51)
+    ON DUPLICATE KEY UPDATE `position` = 51, `is_default` = 'N';
+
+    INSERT INTO `cscart_status_descriptions` (`status`, `type`, `lang_code`, `description`, `email_subj`, `email_header`, `instructions`)
+    VALUES
+      ('X', 'O', 'es', 'Reembolsado', '', '', ''),
+      ('X', 'O', 'en', 'Refunded',    '', '', '')
+    ON DUPLICATE KEY UPDATE `description` = VALUES(`description`);
+    ```
+
+    <Note>
+      Confirmar el nombre de la base de datos y el password de MySQL antes de ejecutar.
+      El nombre del contenedor puede variar — verificar con `docker ps | grep development_db`.
+    </Note>
+  </Tab>
+</Tabs>
+
+---
+
+## Paso 6 — Validación post-migración en DEV
+
+```sql
+-- Confirmar que la tabla existe
+SHOW TABLES LIKE 'cscart_kueski_refunds';
+
+-- Confirmar estados R y X
+SELECT status, description
+FROM cscart_status_descriptions
+WHERE status IN ('R', 'X') AND type = 'O';
+```
+
+Flujo a validar manualmente:
+1. Tomar una orden en estado `P` (Paid) en DEV que tenga mapping en `cscart_kueski_payments` con `status=approved`.
+2. Cambiar el estado a `R` desde el panel de administración.
+3. Confirmar que el hook dispara, Kueski responde HTTP 201 y la orden pasa a `X`.
+4. Verificar registro en `cscart_kueski_refunds`.
+
+---
+
+## Checklist final
+
+| Paso | Descripción | Estado |
+| :--- | :--- | :--- |
+| 1 | Archivos fuente verificados en Staging | ⬜ |
+| 2 | Backup de archivos actuales en DEV | ⬜ |
+| 3 | Archivos copiados a DEV | ⬜ |
+| 4 | Hashes md5sum coinciden | ⬜ |
+| 5A/5B | Tabla y estados creados en DEV | ⬜ |
+| 6 | Validación post-migración en DEV | ⬜ |
