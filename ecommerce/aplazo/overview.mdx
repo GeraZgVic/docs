@@ -1,0 +1,77 @@
+---
+title: "Aplazo — Overview"
+description: "Estado actual, scope, preguntas pendientes y comparativa vs Kueski Pay para la integración de Aplazo en CS-Cart."
+---
+
+## Estado actual
+
+La integración con Aplazo está en fase de **preparación**. Aplazo está en espera de que confirmemos nuestra disponibilidad para arrancar — en ese momento nos presentarán a su ingeniero de integraciones, que será nuestro contacto técnico principal (equivalente a Brenda en Kueski Pay).
+
+Por ahora estamos preparando el terreno: documentación de API lista, scope definido y preguntas técnicas identificadas.
+
+---
+
+## Contacto
+
+| Rol | Nombre | Contacto |
+| :--- | :--- | :--- |
+| Soporte integraciones | Por confirmar | soporte-integraciones@aplazo.mx |
+| Ingeniero TI asignado | Por confirmar — se presentará al arrancar | — |
+
+<Note>
+  Una vez que confirmemos disponibilidad a Aplazo, nos asignarán un ingeniero de integraciones que será el equivalente a Brenda (Kueski Pay).
+</Note>
+
+---
+
+## Scope de la integración
+
+Lo que implementaremos en CS-Cart:
+
+| Componente | Descripción | Prioridad |
+| :--- | :--- | :--- |
+| **Autenticación** | Generación de Bearer token por request | Bloqueante |
+| **Create Payment** | `POST /loan` — iniciar flujo de pago y obtener URL de checkout | Bloqueante |
+| **Webhook** | Recepción de notificación de pago confirmado — responder HTTP 200 | Bloqueante |
+| **Get Payment Status** | `GET /v1/loan/status` — verificar estado por `cartId` | Recomendado |
+| **Cancel Payment** | `GET /v1/merchant/loan/cancel` — cancelar loans en estado `NO CONFIRMADO` | Recomendado |
+| **Refunds** | `POST /loan/refund-from-cart` — reembolso parcial o total | Post-certificación |
+| **Get Refund Status** | `GET /v1/merchant/refund/status` — seguimiento de reembolsos | Post-certificación |
+
+<Warning>
+  A diferencia de Kueski Pay, Aplazo **no cancela pagos automáticamente**. El merchant es responsable de detectar abandono y enviar la cancelación. Esto requiere lógica adicional en CS-Cart que no existe en la integración de Kueski.
+</Warning>
+
+---
+
+## Preguntas pendientes
+
+Estas preguntas deben resolverse con el ingeniero de Aplazo antes o al inicio del desarrollo:
+
+| # | Pregunta | Impacto |
+| :--- | :--- | :--- |
+| 1 | ¿Cuánto tiempo vive el Bearer token? | Define cómo implementamos la capa de autenticación — si el token expira rápido, cada llamada necesita su propio ciclo de auth |
+| 2 | ¿Hay límites de monto min/max por merchant? | En Kueski usábamos `validate-keys` para condicionar la visibilidad del método de pago en checkout. ¿Tiene Aplazo algo equivalente? |
+| 3 | ¿Tienen un ambiente Sandbox separado de Development? | En Kueski el Sandbox fue donde realizamos todas las pruebas E2E antes de certificación. Con Aplazo solo se documentan Development y Production |
+
+---
+
+## Comparativa vs Kueski Pay
+
+| Aspecto | Kueski Pay | Aplazo |
+| :--- | :--- | :--- |
+| **Autenticación** | `Authorization: Bearer {public_key}` fijo por request | Bearer token dinámico — nuevo token por cada request |
+| **Webhook — respuesta merchant** | JWT HS256 firmado con `api_secret` | Solo HTTP 200 — sin body ni headers adicionales |
+| **Cancelaciones automáticas** | Kueski maneja el ciclo de vida | El merchant es responsable de detectar y cancelar |
+| **Reembolsos** | `POST /api/refunds` con JWT | `POST /loan/refund-from-cart` con Bearer token |
+| **Identificador de orden** | `order_id` (string) | `cartId` (string) — equivalente funcional |
+| **URL de checkout** | `callback_url` en la respuesta | `url` en la respuesta |
+| **Ambientes** | Sandbox / Testing / Production | Development / Production |
+| **Certificación requerida** | Sí — 3 pruebas formales con Brenda | Por confirmar |
+| **Límites de monto** | Disponibles via `GET /v1/validate-keys` | Por confirmar |
+
+---
+
+## Documentación de referencia
+
+- [API Reference](/ecommerce/aplazo/api-reference) — Endpoints completos, request/response y ejemplos
