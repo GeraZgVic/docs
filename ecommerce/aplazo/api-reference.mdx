@@ -249,6 +249,10 @@ empty response body
 
 ### Loan Statuses
 
+<Warning>
+  Inconsistencia conocida de Aplazo: distintos endpoints/documentos usan `ACTIVO` y `ACTIVE` para el mismo estado. Tratar ambos valores como equivalentes durante la integración.
+</Warning>
+
 | Status | Descripción |
 | :--- | :--- |
 | `ACTIVO` | Pago activo — el cliente pagó la primera cuota |
