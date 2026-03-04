@@ -1,68 +1,54 @@
 ---
-title: "Aplazo — API Reference"
-description: "Documentación de referencia de la API Online de Aplazo para integración e-commerce."
+title: "Aplazo — Online API"
+description: "Documentación completa de la API Online de Aplazo para integración e-commerce: flujo de pago, cancelaciones, reembolsos y referencia de endpoints."
 ---
 
 ## Índice
 
-- [Authentication](#authentication)
-- [Create a Payment](#create-a-payment)
-- [Get Payment Status](#get-payment-status)
-- [Cancel Payment](#cancel-payment)
-- [Request a Refund](#request-a-refund)
-- [Get Refund Status](#get-refund-status)
-- [Webhook Confirmation](#webhook-confirmation)
+- [Primeros Pasos](#primeros-pasos)
+- [Ambientes](#ambientes)
+- [Flujo de Pago](#flujo-de-pago)
+- [Cancelaciones](#cancelaciones)
+- [Reembolsos](#reembolsos)
+- [API Reference](#api-reference)
+  - [Authentication](#authentication)
+  - [Create a Payment](#create-a-payment)
+  - [Get Payment Status](#get-payment-status)
+  - [Cancel Payment](#cancel-payment)
+  - [Request a Refund](#request-a-refund)
+  - [Get Refund Status](#get-refund-status)
+  - [Webhook Confirmation](#webhook-confirmation)
+- [Postman](#postman)
 
 ---
 
-## Environments
+## Primeros Pasos
 
-| Entorno | Base URL |
-| :--- | :--- |
-| **Development** | `https://api.aplazo.net/api` |
-| **Production** | `https://api.aplazo.mx/api` |
+### Credenciales
 
-<Note>
-  Algunas secciones usan subdominios distintos. Cada endpoint especifica su base URL correspondiente.
-</Note>
+Antes de comenzar, necesitarás las credenciales para autenticar tus peticiones:
 
----
+- Aplazo proporciona un `merchantId` y un `apiToken` durante el proceso de onboarding.
+- Si aún no los tienes, contáctalos en soporte-integraciones@aplazo.mx.
 
-## Authentication
+### Autenticación
+
+Todas las peticiones deben incluir un Bearer token válido en el header `Authorization`. Este token se obtiene enviando una petición al endpoint de autenticación usando tu `merchantId` y `apiToken`.
 
 <Warning>
   Un nuevo Bearer token debe generarse para **cada request**. No reutilizar tokens entre llamadas.
 </Warning>
 
-### Endpoint
-
-| Parámetro | Valor |
-| :--- | :--- |
-| **Método** | POST |
-| **Development** | `https://api.aplazo.net/api/auth` |
-| **Production** | `https://api.aplazo.mx/api/auth` |
-
-### Request Body
-
-| Campo | Tipo | Requerido | Descripción |
-| :--- | :--- | :--- | :--- |
-| `apiToken` | string | Sí | Token de API proporcionado por Aplazo |
-| `merchantId` | integer | Sí | ID del merchant en Aplazo |
-
-### Ejemplo de request
-
 ```bash
 curl --location 'https://api.aplazo.net/api/auth' \
 --header 'Content-Type: application/json' \
 --data '{
-    "apiToken": "93e28f44-e352-42df-af84-7a9ffc9f5734",
+    "apiToken": "YOUR_API_TOKEN",
     "merchantId": 2639
 }'
 ```
 
-### Respuestas
-
-#### 200 — Autenticación exitosa
+**Respuesta:**
 
 ```json
 {
@@ -70,7 +56,145 @@ curl --location 'https://api.aplazo.net/api/auth' \
 }
 ```
 
-#### 404 — Merchant no existe
+Incluye el token en el header de tus siguientes peticiones:
+
+```
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9...
+```
+
+---
+
+## Ambientes
+
+Aplazo tiene dos ambientes. Para cambiar de Development a Production, reemplaza el dominio `.net` por `.mx` en todas las URLs.
+
+<Warning>
+  Al cambiar a producción, reemplaza el dominio **.net** por **.mx** en todos los endpoints.
+</Warning>
+
+| Endpoint | Descripción | Development | Production |
+| :--- | :--- | :--- | :--- |
+| `POST /auth` | Obtener token | `https://api.aplazo.net/api` | `https://api.aplazo.mx/api` |
+| `POST /loan` | Crear pago | `https://api.aplazo.net/api` | `https://api.aplazo.mx/api` |
+| `GET /v1/loan/status` | Consultar estado | `https://merchant.aplazo.net/api` | `https://merchant.aplazo.mx/api` |
+| `GET /v1/merchant/loan/cancel` | Cancelar pago | `https://refunds-bifrost.aplazo.net/api` | `https://refunds-bifrost.aplazo.mx/api` |
+| `POST /loan/refund-from-cart` | Solicitar reembolso | `https://merchant.aplazo.net/api` | `https://merchant.aplazo.mx/api` |
+| `GET /v1/merchant/refund/status` | Estado de reembolso | `https://merchant.aplazo.net/api` | `https://merchant.aplazo.mx/api` |
+
+<Note>
+  A diferencia de Kueski Pay, Aplazo usa **subdominios distintos** según la operación. Cada endpoint tiene su propia base URL.
+</Note>
+
+---
+
+## Flujo de Pago
+
+El flujo típico de un pago con Aplazo sigue estos pasos:
+
+**1. Autenticación** — Genera un Bearer token para autenticar la petición.
+
+**2. Crear pago** — Envía la petición de pago a Aplazo. La respuesta incluye una `url` de checkout.
+
+**3. Redirigir al cliente** — Redirige al cliente a la `url` de checkout recibida.
+
+**4. Checkout en Aplazo** — El cliente consulta su plan de pagos y realiza el primer pago.
+
+**5. Recibir webhook** — Aplazo envía una notificación POST a tu `webHookUrl` con el estado del pago. Responde con HTTP 200.
+
+**6. Redirigir al cliente** — Después del pago, Aplazo redirige al cliente a la `successUrl` que especificaste en la petición.
+
+<Note>
+  El único indicador confiable de que un pago fue exitoso es recibir el webhook con `status: Activo` **o** consultar el GET payment status y obtener `ACTIVO`. La `successUrl` no debe usarse como confirmación de pago.
+</Note>
+
+---
+
+## Cancelaciones
+
+Un pago puede cancelarse mientras esté en estado `NO CONFIRMADO` — es decir, antes de que el cliente complete el primer pago. Una vez en estado `ACTIVO` ya no puede cancelarse, solo reembolsarse.
+
+<Warning>
+  Aplazo **no cancela pagos automáticamente**. Es responsabilidad del merchant detectar cuándo una transacción debe cancelarse (por ejemplo, carrito abandonado o timeout) y enviar la solicitud de cancelación.
+</Warning>
+
+**Motivos comunes de cancelación:**
+- El usuario abandona la compra.
+- El merchant cancela automáticamente tras un período de inactividad.
+
+**Flujo de cancelación:**
+
+1. Cliente inicia el pago y es redirigido al checkout de Aplazo.
+2. Cliente no completa el primer pago — el loan queda en `NO CONFIRMADO`.
+3. El merchant detecta el abandono y envía la solicitud al endpoint de cancelación.
+4. Aplazo actualiza el estado a `CANCELADO / DEVUELTO`.
+
+<Note>
+  Una vez cancelado, el pago no puede recuperarse. Si el cliente desea continuar, el merchant debe crear una nueva petición de pago.
+</Note>
+
+---
+
+## Reembolsos
+
+Un reembolso es la devolución parcial o total de un pago que ya fue confirmado (`ACTIVO`). Este proceso no puede deshacerse.
+
+<Note>
+  Al recibir HTTP 200 en la respuesta de la solicitud de reembolso, el reembolso se considera procesado correctamente.
+</Note>
+
+**Flujo de reembolso:**
+
+1. Genera un Bearer token.
+2. Envía la solicitud al endpoint de reembolso con `cartId`, `totalAmount` y `reason`.
+3. Aplazo responde HTTP 200 — reembolso procesado.
+
+---
+
+## API Reference
+
+<Note>
+  En esta documentación los términos "payment", "loan" y "order" se usan de forma intercambiable — refieren al mismo concepto.
+</Note>
+
+### Authentication
+
+#### Endpoint
+
+| Parámetro | Valor |
+| :--- | :--- |
+| **Método** | POST |
+| **Development** | `https://api.aplazo.net/api/auth` |
+| **Production** | `https://api.aplazo.mx/api/auth` |
+
+#### Request Body
+
+| Campo | Tipo | Requerido | Descripción |
+| :--- | :--- | :--- | :--- |
+| `apiToken` | string | Sí | Token de API proporcionado por Aplazo |
+| `merchantId` | integer | Sí | ID del merchant en Aplazo |
+
+#### Ejemplo de request
+
+```bash
+curl --location 'https://api.aplazo.net/api/auth' \
+--header 'Content-Type: application/json' \
+--data '{
+    "apiToken": "YOUR_API_TOKEN",
+    "merchantId": 2639
+}'
+```
+
+#### Respuestas
+
+##### 200 — Autenticación exitosa
+
+```json
+{
+    "Authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9..."
+}
+```
+
+##### 404 — Merchant no existe
 
 ```json
 {
@@ -81,7 +205,7 @@ curl --location 'https://api.aplazo.net/api/auth' \
 }
 ```
 
-#### 400 — Merchant no aprobado
+##### 400 — Merchant no aprobado
 
 ```json
 {
@@ -92,7 +216,7 @@ curl --location 'https://api.aplazo.net/api/auth' \
 }
 ```
 
-#### 400 — Campo faltante o tipo de dato inválido
+##### 400 — Campo faltante o tipo de dato inválido
 
 ```
 empty response body
@@ -100,13 +224,9 @@ empty response body
 
 ---
 
-## Create a Payment
+### Create a Payment
 
-<Note>
-  En esta documentación los términos "payment", "loan" y "order" se usan de forma intercambiable — refieren al mismo concepto.
-</Note>
-
-### Endpoint
+#### Endpoint
 
 | Parámetro | Valor |
 | :--- | :--- |
@@ -115,9 +235,9 @@ empty response body
 | **Production** | `https://api.aplazo.mx/api/loan` |
 | **Autenticación** | `Authorization: Bearer {token}` |
 
-### Request Body
+#### Request Body
 
-#### Campos requeridos
+##### Campos requeridos
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
@@ -134,7 +254,7 @@ empty response body
 | `shipping` | object | Detalles de envío |
 | `taxes` | object | Impuestos aplicados al carrito |
 
-#### Buyer Object
+##### Buyer Object
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
@@ -146,7 +266,7 @@ empty response body
 | `phone` | string | Teléfono del comprador |
 | `postalCode` | string | Código postal del comprador |
 
-#### Product Object
+##### Product Object
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
@@ -157,30 +277,30 @@ empty response body
 | `price` | number | Precio del producto |
 | `title` | string | Nombre del producto |
 
-#### Discount Object
+##### Discount Object
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
 | `price` | number | Monto del descuento |
 | `title` | string | Título o razón del descuento |
 
-#### Shipping Object
+##### Shipping Object
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
 | `price` | number | Costo de envío |
 | `title` | string | Método o título del envío |
 
-#### Taxes Object
+##### Taxes Object
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
 | `price` | number | Monto de impuestos |
 | `title` | string | Descripción del impuesto |
 
-### Respuestas
+#### Respuestas
 
-#### 200 — Loan creado exitosamente
+##### 200 — Loan creado exitosamente
 
 ```json
 {
@@ -196,7 +316,7 @@ empty response body
 | `loanId` | integer | Identificador del loan en Aplazo |
 | `loanToken` | string | Token asociado al loan creado |
 
-#### 400 — Ya existe un loan `ACTIVO` con el mismo `cartId`
+##### 400 — Ya existe un loan `ACTIVO` con el mismo `cartId`
 
 ```json
 {
@@ -206,13 +326,13 @@ empty response body
 }
 ```
 
-#### 403 — Token de autenticación inválido
+##### 403 — Token de autenticación inválido
 
 ```
 empty response body
 ```
 
-#### 500 — Campo faltante o parámetro inválido
+##### 500 — Campo faltante o parámetro inválido
 
 ```json
 {
@@ -225,9 +345,9 @@ empty response body
 
 ---
 
-## Get Payment Status
+### Get Payment Status
 
-### Endpoint
+#### Endpoint
 
 | Parámetro | Valor |
 | :--- | :--- |
@@ -240,14 +360,14 @@ empty response body
   Se puede consultar el status por `loanId` o por `cartId` — solo se debe usar uno de los dos.
 </Warning>
 
-### Query Parameters
+#### Query Parameters
 
 | Parámetro | Tipo | Requerido | Descripción |
 | :--- | :--- | :--- | :--- |
 | `loan_id` | integer | No | Identificador único del loan |
 | `cart_id` | string | Condicional | Identificador del carrito en el sistema del merchant |
 
-### Loan Statuses
+#### Loan Statuses
 
 <Warning>
   Inconsistencia conocida de Aplazo: distintos endpoints/documentos usan `ACTIVO` y `ACTIVE` para el mismo estado. Tratar ambos valores como equivalentes durante la integración.
@@ -256,12 +376,12 @@ empty response body
 | Status | Descripción |
 | :--- | :--- |
 | `ACTIVO` | Pago activo — el cliente pagó la primera cuota |
-| `NO CONFIRMADO` | Pago no confirmado |
+| `NO CONFIRMADO` | Pago no confirmado — cancelable |
 | `CANCELADO / DEVUELTO` | Pago cancelado o devuelto |
 
-### Respuestas
+#### Respuestas
 
-#### 200 — Status obtenido exitosamente
+##### 200 — Status obtenido exitosamente
 
 ```bash
 curl --location 'https://merchant.aplazo.net/api/v1/loan/status?cart_id=some-cart' \
@@ -275,7 +395,7 @@ curl --location 'https://merchant.aplazo.net/api/v1/loan/status?cart_id=some-car
 }
 ```
 
-#### 404 — cartId no encontrado
+##### 404 — cartId no encontrado
 
 ```json
 {
@@ -286,7 +406,7 @@ curl --location 'https://merchant.aplazo.net/api/v1/loan/status?cart_id=some-car
 }
 ```
 
-#### 400 — Query parameter inválido
+##### 400 — Query parameter inválido
 
 ```json
 {
@@ -299,13 +419,13 @@ curl --location 'https://merchant.aplazo.net/api/v1/loan/status?cart_id=some-car
 
 ---
 
-## Cancel Payment
+### Cancel Payment
 
 <Warning>
   Este endpoint **nunca debe usarse como confirmación de pago**. El pago solo se confirma via GET payment status o via webhook.
 </Warning>
 
-### Endpoint
+#### Endpoint
 
 | Parámetro | Valor |
 | :--- | :--- |
@@ -314,21 +434,21 @@ curl --location 'https://merchant.aplazo.net/api/v1/loan/status?cart_id=some-car
 | **Production** | `https://refunds-bifrost.aplazo.mx/api/v1/merchant/loan/cancel` |
 | **Autenticación** | `Authorization: Bearer {token}` |
 
-### Query Parameters
+#### Query Parameters
 
 | Parámetro | Tipo | Requerido | Descripción |
 | :--- | :--- | :--- | :--- |
 | `cartId` | string | Sí | Identificador del carrito asociado al loan a cancelar |
 
-### Respuestas
+#### Respuestas
 
-#### 202 — Cancelación aceptada
+##### 202 — Cancelación aceptada
 
 ```
 HTTP 202 Accepted
 ```
 
-#### 400 — Loan en estado no cancelable (ya pagado, ya cancelado, o reembolsado)
+##### 400 — Loan en estado no cancelable
 
 ```json
 {
@@ -345,9 +465,9 @@ HTTP 202 Accepted
 
 ---
 
-## Request a Refund
+### Request a Refund
 
-### Endpoint
+#### Endpoint
 
 | Parámetro | Valor |
 | :--- | :--- |
@@ -360,7 +480,7 @@ HTTP 202 Accepted
   Los reembolsos pueden ser parciales o totales, pero deben ser menores al monto total del loan.
 </Note>
 
-### Request Body
+#### Request Body
 
 | Campo | Tipo | Requerido | Descripción |
 | :--- | :--- | :--- | :--- |
@@ -368,7 +488,7 @@ HTTP 202 Accepted
 | `totalAmount` | number | Sí | Monto a reembolsar — debe ser menor al total del loan |
 | `reason` | string | Sí | Razón del reembolso |
 
-### Ejemplo de request
+#### Ejemplo de request
 
 ```bash
 curl --location 'https://merchant.aplazo.net/api/loan/refund-from-cart' \
@@ -381,9 +501,9 @@ curl --location 'https://merchant.aplazo.net/api/loan/refund-from-cart' \
 }'
 ```
 
-### Respuestas
+#### Respuestas
 
-#### 200 — Reembolso solicitado exitosamente
+##### 200 — Reembolso solicitado exitosamente
 
 ```json
 {
@@ -403,7 +523,7 @@ curl --location 'https://merchant.aplazo.net/api/loan/refund-from-cart' \
 | `refundStatus` | string | Status del reembolso: `REQUESTED`, `REJECTED`, `REFUNDED` |
 | `refundDate` | string (datetime) | Timestamp de cuando se solicitó el reembolso |
 
-#### 500 — Carrito no encontrado
+##### 500 — Carrito no encontrado
 
 ```json
 {
@@ -417,9 +537,9 @@ curl --location 'https://merchant.aplazo.net/api/loan/refund-from-cart' \
 
 ---
 
-## Get Refund Status
+### Get Refund Status
 
-### Endpoint
+#### Endpoint
 
 | Parámetro | Valor |
 | :--- | :--- |
@@ -428,13 +548,13 @@ curl --location 'https://merchant.aplazo.net/api/loan/refund-from-cart' \
 | **Production** | `https://merchant.aplazo.mx/api/v1/merchant/refund/status` |
 | **Autenticación** | `Authorization: Bearer {token}` |
 
-### Query Parameters
+#### Query Parameters
 
 | Parámetro | Tipo | Requerido | Descripción |
 | :--- | :--- | :--- | :--- |
 | `cartId` | string | Sí | Identificador del carrito a consultar |
 
-### Refund Statuses
+#### Refund Statuses
 
 | Status | Descripción |
 | :--- | :--- |
@@ -442,9 +562,9 @@ curl --location 'https://merchant.aplazo.net/api/loan/refund-from-cart' \
 | `REJECTED` | Reembolso rechazado |
 | `REFUNDED` | Reembolso completado |
 
-### Respuestas
+#### Respuestas
 
-#### 200 — Status de reembolsos obtenido exitosamente
+##### 200 — Status obtenido exitosamente
 
 ```json
 [
@@ -466,13 +586,13 @@ curl --location 'https://merchant.aplazo.net/api/loan/refund-from-cart' \
 
 ---
 
-## Webhook Confirmation
+### Webhook Confirmation
 
-### Descripción general
+#### Descripción general
 
-Por cada payment request enviado, Aplazo requiere que se proporcione una `webHookUrl` donde recibirá las notificaciones. En cuanto el usuario paga la primera cuota, Aplazo envía un POST a esa URL.
+Por cada payment request enviado, Aplazo requiere que se proporcione una `webHookUrl`. En cuanto el usuario paga la primera cuota, Aplazo envía un POST a esa URL.
 
-### Respuesta esperada del merchant
+#### Respuesta esperada del merchant
 
 Al recibir el webhook, el merchant debe responder con **HTTP 200** para confirmar la recepción exitosa. No se requiere body ni headers adicionales.
 
@@ -480,7 +600,7 @@ Al recibir el webhook, el merchant debe responder con **HTTP 200** para confirma
   A diferencia de Kueski Pay, Aplazo no requiere JWT firmado en la respuesta — solo HTTP 200.
 </Note>
 
-### Payload entrante
+#### Payload entrante
 
 ```json
 {
@@ -498,24 +618,36 @@ Al recibir el webhook, el merchant debe responder con **HTTP 200** para confirma
 | `cartId` | string | Identificador del carrito proporcionado por el merchant en el payment request |
 | `merchantId` | integer | ID del merchant asignado por Aplazo |
 
-### Relación entre status del webhook y GET status
+#### Relación entre status del webhook y GET status
 
 | Status en Webhook | GET loan status |
 | :--- | :--- |
-| `Activo` | `ACTIVE` |
+| `Activo` | `ACTIVO / ACTIVE` |
 
-### Seguridad del Webhook
+#### Seguridad del Webhook
 
 Aplazo ofrece dos métodos opcionales para verificar y asegurar los requests entrantes:
 
-#### IP Whitelisting
+**IP Whitelisting** — Aplazo puede compartir sus IPs estáticas para sandbox y producción. El servidor del merchant puede configurarse para aceptar requests solo desde esas IPs.
 
-Aplazo puede compartir sus IPs estáticas para sandbox y producción. El servidor del merchant puede configurarse para aceptar requests solo desde esas IPs.
-
-#### Security Token en el Header
-
-Aplazo puede incluir un token de autenticación en el header de cada webhook request. Puede configurarse como `Basic` o `Bearer`. El merchant debe validar el header entrante contra el token esperado — requests sin token válido deben rechazarse con `400`.
+**Security Token en el Header** — Aplazo puede incluir un token `Basic` o `Bearer` en el header de cada webhook. El merchant debe validar el header entrante — requests sin token válido deben rechazarse con `400`.
 
 <Note>
   Ambos métodos son opcionales pero recomendados para entornos de producción.
+</Note>
+
+---
+
+## Postman
+
+Aplazo proporciona una colección de Postman con requests preconfigurados para todos los endpoints.
+
+**Cómo usarla:**
+
+1. Solicita tu `merchantId` y `apiToken` a soporte-integraciones@aplazo.mx.
+2. Importa la colección desde el botón "Run in Postman" en la documentación oficial de Aplazo.
+3. Selecciona el ambiente `Aplazo Online - Development` y configura tu `merchantId` y `apiToken`.
+
+<Note>
+  La colección incluye un ambiente preconfigurado con todas las URLs de Development listas para usar.
 </Note>
