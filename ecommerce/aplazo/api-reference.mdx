@@ -55,7 +55,7 @@ description: "Documentación de referencia de la API Online de Aplazo para integ
 curl --location 'https://api.aplazo.net/api/auth' \
 --header 'Content-Type: application/json' \
 --data '{
-    "apiToken": "YOUR_API_TOKEN",
+    "apiToken": "93e28f44-e352-42df-af84-7a9ffc9f5734",
     "merchantId": 2639
 }'
 ```
@@ -248,10 +248,6 @@ empty response body
 | `cart_id` | string | Condicional | Identificador del carrito en el sistema del merchant |
 
 ### Loan Statuses
-
-<Warning>
-  Inconsistencia conocida de Aplazo: distintos endpoints/documentos usan `ACTIVO` y `ACTIVE` para el mismo estado. Tratar ambos valores como equivalentes durante la integración.
-</Warning>
 
 | Status | Descripción |
 | :--- | :--- |
@@ -471,6 +467,14 @@ curl --location 'https://merchant.aplazo.net/api/loan/refund-from-cart' \
 ### Descripción general
 
 Por cada payment request enviado, Aplazo requiere que se proporcione una `webHookUrl` donde recibirá las notificaciones. En cuanto el usuario paga la primera cuota, Aplazo envía un POST a esa URL.
+
+### Respuesta esperada del merchant
+
+Al recibir el webhook, el merchant debe responder con **HTTP 200** para confirmar la recepción exitosa. No se requiere body ni headers adicionales.
+
+<Note>
+  A diferencia de Kueski Pay, Aplazo no requiere JWT firmado en la respuesta — solo HTTP 200.
+</Note>
 
 ### Payload entrante
 
